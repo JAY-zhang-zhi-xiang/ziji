@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#ece8e0" />
+    <meta
+      name="description"
+      content="一个只为个人使用的自动记账 PWA：支付通知自动识别、分类并直接入账，手动记账用于补录。"
+    />
+    <title>自记 | 个人自动记账</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css?v=17" />
+  </head>
+  <body>
+    <svg class="icon-sprite" aria-hidden="true" hidden>
+      <symbol id="icon-cat-food" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M7 3v7a2 2 0 0 0 4 0V3"/><path d="M9 10v11"/><path d="M16 3c-1.5 0-2.5 1.8-2.5 4s1 4 2.5 4v10"/>
+      </symbol>
+      <symbol id="icon-cat-transport" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16"/><circle cx="7.5" cy="16" r="1.6"/><circle cx="16.5" cy="16" r="1.6"/>
+      </symbol>
+      <symbol id="icon-cat-shopping" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 8h12l-1 12H7L6 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>
+      </symbol>
+      <symbol id="icon-cat-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/>
+      </symbol>
+      <symbol id="icon-cat-entertainment" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8.5"/><path d="M10 9l6 3-6 3V9Z" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="icon-cat-medical" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8.5"/><path d="M12 8.5v7M8.5 12h7"/>
+      </symbol>
+      <symbol id="icon-cat-study" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 5.5A2 2 0 0 1 6 4h5v16H6a2 2 0 0 0-2 2V5.5Z"/><path d="M20 5.5A2 2 0 0 0 18 4h-5v16h5a2 2 0 0 1 2 2V5.5Z"/>
+      </symbol>
+      <symbol id="icon-cat-social" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="9" width="16" height="11" rx="1"/><path d="M4 9h16v4H4z"/><path d="M12 9v11"/><path d="M12 9c-1.2-3-5.5-3.6-5.5-1 0 1.4 1.6 1 5.5 1Zm0 0c1.2-3 5.5-3.6 5.5-1 0 1.4-1.6 1-5.5 1Z"/>
+      </symbol>
+      <symbol id="icon-cat-income" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>
+      </symbol>
+      <symbol id="icon-cat-refund" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 7 4 11l4 4"/><path d="M4 11h11a5 5 0 0 1 0 10H9"/>
+      </symbol>
+      <symbol id="icon-cat-other" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="18" cy="6" r="1.2" fill="currentColor" stroke="none"/>
+        <circle cx="6" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="icon-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m14.5 4.5 5 5L8 21H3v-5L14.5 4.5Z"/><path d="m13 6 5 5"/>
+      </symbol>
+      <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M10 11v6M14 11v6"/>
+      </symbol>
+      <symbol id="icon-transfer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 8h13"/><path d="M14 4l3 4-3 4"/><path d="M20 16H7"/><path d="M10 20l-3-4 3-4"/>
+      </symbol>
+      <symbol id="icon-toast-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/>
+      </symbol>
+      <symbol id="icon-toast-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.5l5 5m0-5-5 5"/>
+      </symbol>
+      <symbol id="icon-toast-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8.5"/><path d="M12 11v5"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="icon-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 9l6 6 6-6"/>
+      </symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 6l12 12M18 6 6 18"/>
+      </symbol>
+      <symbol id="icon-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 2 4.5 13h6L9 22l8.5-11h-6L13 2Z"/>
+      </symbol>
+    </svg>
+    <main class="app-shell">
+      <section class="phone-frame" aria-label="自记个人记账应用">
+        <h1 class="sr-only">自记 · 个人自动记账</h1>
+        <header class="hero">
+          <div class="status-row">
+            <span class="status-dot"></span>
+            <span id="syncState">自动记账准备中</span>
+          </div>
+          <div class="month-card">
+            <div>
+              <span>本月支出</span>
+              <strong id="monthSpend">¥0.00</strong>
+            </div>
+            <small id="budgetHint">还没有设置预算</small>
+          </div>
+        </header>
+
+        <nav class="tabbar" role="tablist" aria-label="主导航">
+          <button class="tab-button active" id="tabbtn-home" role="tab" aria-selected="true" aria-controls="tab-home" data-tab="home" tabindex="0" type="button">收件箱</button>
+          <button class="tab-button" id="tabbtn-ledger" role="tab" aria-selected="false" aria-controls="tab-ledger" data-tab="ledger" tabindex="-1" type="button">账本</button>
+          <button class="tab-button" id="tabbtn-reports" role="tab" aria-selected="false" aria-controls="tab-reports" data-tab="reports" tabindex="-1" type="button">报表</button>
+          <button class="tab-button" id="tabbtn-rules" role="tab" aria-selected="false" aria-controls="tab-rules" data-tab="rules" tabindex="-1" type="button">规则</button>
+          <button class="tab-button" id="tabbtn-setup" role="tab" aria-selected="false" aria-controls="tab-setup" data-tab="setup" tabindex="-1" type="button">自动化</button>
+        </nav>
+
+        <section class="screen active" id="tab-home" role="tabpanel" aria-labelledby="tabbtn-home" tabindex="0">
+          <article class="capture-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Autopilot</p>
+                <h2>自动记账</h2>
+              </div>
+              <button class="ghost-button" id="openAutomation" type="button">配置自动记账</button>
+            </div>
+            <div class="autopilot-callout" id="autopilotCallout">
+              <span class="autopilot-icon" aria-hidden="true"><svg><use href="#icon-bolt"></use></svg></span>
+              <div>
+                <strong id="autopilotTitle">支付后自动读取通知</strong>
+                <p id="autopilotCopy">安装 Android 伴侣并授权一次，微信、支付宝和银行消费通知会自动进入账本。</p>
+              </div>
+            </div>
+            <p class="privacy-note">正常支付后由 Android 伴侣自动读取通知并直接入账；如果没有读到，再用下面的手动记账补录。</p>
+          </article>
+
+          <article class="section-card manual-entry-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Manual Entry</p>
+                <h2>手动记一笔</h2>
+              </div>
+              <span class="pill">直接入账</span>
+            </div>
+            <form id="manualEntryForm" class="manual-entry-form">
+              <fieldset class="direction-choice">
+                <legend>收支方向</legend>
+                <div class="segmented-control">
+                  <label><input type="radio" name="manualDirection" value="expense" checked /><span>支出</span></label>
+                  <label><input type="radio" name="manualDirection" value="income" /><span>收入</span></label>
+                </div>
+              </fieldset>
+              <label class="field"><span>金额</span><input id="manualAmount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="例如 32.00" required /></label>
+              <label class="field"><span>商户 / 来源</span><input id="manualMerchant" type="text" maxlength="120" placeholder="例如 午餐、工资" required /></label>
+              <label class="field"><span>分类</span><select id="manualCategory" required></select></label>
+              <label class="field"><span>账户</span><select id="manualAccount" required></select></label>
+              <label class="field"><span>日期时间</span><input id="manualOccurredAt" type="datetime-local" required /></label>
+              <label class="field manual-note-field"><span>备注（可选）</span><input id="manualNote" type="text" maxlength="240" placeholder="补充一点上下文" /></label>
+              <button class="primary-button compact" type="submit">保存账单</button>
+            </form>
+            <p class="privacy-note">手动账单会直接进入账本，并参与报表和账户余额计算。</p>
+          </article>
+
+          <article class="insight-strip">
+            <div>
+              <span>今日支出</span>
+              <strong id="todaySpend">¥0.00</strong>
+            </div>
+            <div>
+              <span>最常用分类</span>
+              <strong id="topCategory">暂无</strong>
+            </div>
+            <div>
+              <span>自动识别率</span>
+              <strong id="autoRate">0%</strong>
+            </div>
+          </article>
+        </section>
+
+        <section class="screen" id="tab-ledger" role="tabpanel" aria-labelledby="tabbtn-ledger" tabindex="0">
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Timeline</p>
+                <h2>最近账单</h2>
+              </div>
+              <button class="ghost-button" id="exportCsv" type="button">导出 CSV</button>
+            </div>
+            <label class="ledger-search-field">
+              <span class="sr-only">搜索账单</span>
+              <input id="ledgerSearch" type="search" placeholder="搜索商户、分类、账户或备注" autocomplete="off" />
+            </label>
+            <div class="filter-row" id="directionFilters" aria-label="按收支筛选"></div>
+            <div class="filter-row" id="categoryFilters"></div>
+            <div id="ledgerList" class="ledger-list"></div>
+          </article>
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Transfer</p>
+                <h2>账户间转账</h2>
+              </div>
+            </div>
+            <div class="transfer-form">
+              <label class="field"><span>转出账户</span><select id="transferFrom"></select></label>
+              <label class="field"><span>转入账户</span><select id="transferTo"></select></label>
+              <label class="field"><span>金额</span><input id="transferAmount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="例如 100.00" /></label>
+              <label class="field"><span>备注（可选）</span><input id="transferNote" type="text" placeholder="例如 月度转入" /></label>
+              <button class="primary-button compact" id="saveTransfer" type="button">转账</button>
+              <button class="secondary-button compact" id="cancelTransferEdit" type="button" hidden>取消编辑</button>
+            </div>
+          </article>
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Pulse</p>
+                <h2>分类流向</h2>
+              </div>
+            </div>
+            <div id="categoryChart" class="category-chart"></div>
+          </article>
+        </section>
+
+        <section class="screen" id="tab-reports" role="tabpanel" aria-labelledby="tabbtn-reports" tabindex="0">
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Overview</p>
+                <h2 id="reportPeriodLabel">本月</h2>
+              </div>
+              <div class="period-nav">
+                <button class="icon-btn chevron-left" id="reportPrevMonth" type="button" aria-label="上一个月"><svg><use href="#icon-chevron"></use></svg></button>
+                <button class="icon-btn chevron-right" id="reportNextMonth" type="button" aria-label="下一个月"><svg><use href="#icon-chevron"></use></svg></button>
+              </div>
+            </div>
+            <div class="report-stats">
+              <div>
+                <span>支出</span>
+                <strong id="reportExpense" class="money-out">¥0.00</strong>
+              </div>
+              <div>
+                <span>收入</span>
+                <strong id="reportIncome" class="money-in">¥0.00</strong>
+              </div>
+              <div>
+                <span>结余</span>
+                <strong id="reportNet">¥0.00</strong>
+              </div>
+            </div>
+            <p id="reportMeta" class="muted-copy">本期还没有收支记录。</p>
+          </article>
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Breakdown</p>
+                <h2>本期分类支出</h2>
+              </div>
+            </div>
+            <div id="reportCategoryChart" class="category-chart"></div>
+          </article>
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Trend</p>
+                <h2>近 6 个月支出</h2>
+              </div>
+            </div>
+            <div id="reportTrend" class="category-chart"></div>
+          </article>
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Net Worth</p>
+                <h2>账户余额</h2>
+              </div>
+              <span class="pill" id="reportNetWorth">¥0.00</span>
+            </div>
+            <div id="reportBalances" class="entity-list"></div>
+          </article>
+        </section>
+
+        <section class="screen" id="tab-rules" role="tabpanel" aria-labelledby="tabbtn-rules" tabindex="0">
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Memory</p>
+                <h2>让它记住你的习惯</h2>
+              </div>
+            </div>
+            <div class="rule-form">
+              <label class="field"><span>关键词</span><input id="ruleKeyword" type="text" placeholder="如 瑞幸 / 滴滴 / 房租" /></label>
+              <label class="field"><span>分类</span><select id="ruleCategory"></select></label>
+              <button class="primary-button compact" id="saveRule" type="button">保存</button>
+            </div>
+            <div id="ruleList" class="rule-list"></div>
+          </article>
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Budget</p>
+                <h2>本月预算</h2>
+              </div>
+            </div>
+            <div class="budget-editor">
+              <label class="field"><span>月度预算</span><input id="budgetInput" type="number" min="0" step="100" inputmode="decimal" placeholder="例如 5000" /></label>
+              <button class="secondary-button" id="saveBudget" type="button">保存预算</button>
+            </div>
+            <div class="budget-meter">
+              <span id="budgetBar"></span>
+            </div>
+            <p id="budgetCopy" class="muted-copy">设置预算后，这里会显示本月消耗进度。</p>
+          </article>
+        </section>
+
+        <section class="screen" id="tab-setup" role="tabpanel" aria-labelledby="tabbtn-setup" tabindex="0">
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Automation</p>
+                <h2>个人版自动记账路线</h2>
+              </div>
+            </div>
+            <div class="automation-actions">
+              <a class="primary-button compact" href="./android-companion/build/outputs/apk/debug/ZijiNotificationCompanion-debug.apk" download>下载 Android 伴侣</a>
+              <span class="muted-copy">安装后只需授权一次通知读取</span>
+            </div>
+            <div class="setup-steps">
+              <div class="setup-step">
+                <span>1</span>
+                <div>
+                  <strong>安装 Android 自动记账伴侣</strong>
+                  <p>在 Android 手机上安装项目生成的 APK。它负责在系统通知到达时自动读取支付信息，网页 PWA 不能替代这一步。</p>
+                </div>
+              </div>
+              <div class="setup-step">
+                <span>2</span>
+                <div>
+                  <strong>只授权一次通知读取</strong>
+                  <p>打开伴侣后点击“开启通知读取权限”，在系统设置中允许“自记自动记账”。之后正常支付即可自动记账，不需要复制或粘贴。</p>
+                </div>
+              </div>
+              <div class="setup-step">
+                <span>3</span>
+                <div>
+                  <strong>默认先记到手机本地</strong>
+                  <p>通知解析、去重和账本保存都在手机上完成；电脑服务只是可选同步，不开电脑也不影响自动记账。</p>
+                </div>
+              </div>
+              <div class="setup-step">
+                <span>4</span>
+                <div>
+                  <strong>识别成功后直接入账</strong>
+                  <p>通知读到金额后会自动写入账本，不会要求你逐笔确认；商户和分类按解析器与自定义规则处理。</p>
+                </div>
+              </div>
+              <div class="setup-step caution">
+                <span>!</span>
+                <div>
+                  <strong>通知缺失时的兜底</strong>
+                  <p>如果某个支付渠道没有发送通知，直接使用首页的手动记账表单补录，不需要复制粘贴。</p>
+                </div>
+              </div>
+            </div>
+          </article>
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Accounts</p>
+                <h2>账户管理</h2>
+              </div>
+            </div>
+            <div class="entity-form">
+              <label class="field"><span>账户名称</span><input id="newAccountName" type="text" placeholder="如 招商银行" /></label>
+              <label class="field"><span>起始余额（可选）</span><input id="newAccountBalance" type="number" step="0.01" inputmode="decimal" placeholder="例如 0.00" /></label>
+              <button class="primary-button compact" id="addAccount" type="button">添加</button>
+            </div>
+            <div id="accountList" class="entity-list"></div>
+          </article>
+          <article class="section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Categories</p>
+                <h2>分类管理</h2>
+              </div>
+            </div>
+            <div class="entity-form">
+              <label class="field"><span>分类名称</span><input id="newCategoryName" type="text" placeholder="例如 宠物" /></label>
+              <button class="primary-button compact" id="addCategory" type="button">添加</button>
+            </div>
+            <div id="categoryList" class="entity-list"></div>
+          </article>
+          <article class="section-card danger-zone">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Local Data</p>
+                <h2>本地数据</h2>
+              </div>
+            </div>
+            <div class="action-row">
+              <button class="secondary-button" id="exportJson" type="button">备份 JSON</button>
+              <label class="secondary-button file-trigger">
+                恢复备份
+                <input id="restoreJson" type="file" accept=".json" />
+              </label>
+              <label class="secondary-button file-trigger">
+                导入 CSV
+                <input id="importCsv" type="file" accept=".csv,text/csv,text/plain" />
+              </label>
+              <button class="danger-button" id="clearAll" type="button">清空</button>
+            </div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <div class="modal-overlay" id="editModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="修改账单">
+        <h3 class="modal-title">修改账单</h3>
+        <div class="modal-form">
+          <label class="modal-label">
+            商户
+            <input id="editMerchant" class="modal-input" type="text" autocomplete="off" />
+          </label>
+          <label class="modal-label">
+            金额
+            <input id="editAmount" class="modal-input" type="number" min="0.01" step="0.01" />
+          </label>
+          <label class="modal-label">
+            分类
+            <select id="editCategory" class="modal-input"></select>
+          </label>
+          <label class="modal-label">
+            账户
+            <select id="editAccount" class="modal-input"></select>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="editDeleteEntry" class="danger-button modal-delete" type="button">删除</button>
+          <div class="modal-actions-right">
+            <button id="editCancel" class="secondary-button" type="button">取消</button>
+            <button id="editConfirm" class="primary-button" type="button">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="./app.js?v=32" type="module"></script>
+  </body>
+</html>

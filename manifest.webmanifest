@@ -1,0 +1,28 @@
+{
+  "name": "自记 - 个人自动记账",
+  "short_name": "自记",
+  "description": "粘贴、分享或导入微信、支付宝、银行卡账单文本后自动解析入账。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ece8e0",
+  "theme_color": "#ece8e0",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "./assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "share_target": {
+    "action": "./index.html",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
+}

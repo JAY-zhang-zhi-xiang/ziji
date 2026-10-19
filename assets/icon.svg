@@ -1,0 +1,11 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 与 Android 端 ic_launcher_foreground 同一套色：深炭底 + 纸白 + 赤陶 -->
+  <rect width="512" height="512" rx="128" fill="#2A2E32"/>
+  <path d="M102 140C102 113.49 123.49 92 150 92H362C388.51 92 410 113.49 410 140V372C410 398.51 388.51 420 362 420H150C123.49 420 102 398.51 102 372V140Z" fill="#FEFDFA"/>
+  <path d="M142 166H370" stroke="#2A2E32" stroke-width="20" stroke-linecap="round"/>
+  <path d="M154 232H296" stroke="#A4432D" stroke-width="18" stroke-linecap="round"/>
+  <path d="M154 286H348" stroke="#C4795F" stroke-width="18" stroke-linecap="round"/>
+  <path d="M154 340H248" stroke="#E0B5A4" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="350" cy="232" r="28" fill="#A4432D"/>
+  <path d="M338 232L348 242L366 220" stroke="#FEFDFA" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

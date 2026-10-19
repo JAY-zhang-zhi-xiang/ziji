@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_label">自记自动记账（页面识别）</string>
+    <string name="accessibility_service_summary">识别支付成功页并自动记账</string>
+    <string name="accessibility_service_description">开启后，自记会读取微信、支付宝、云闪付和银行 App 的支付结果页面文本，识别金额与商户并自动记入本地账本。只读取这些支付页面的内容，不截屏、不读取密码，数据全部保存在这台手机上。</string>
+</resources>

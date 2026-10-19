@@ -1,0 +1,41 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <!-- 账本卡面：暖白纸感 -->
+    <path
+        android:fillColor="#FEFDFA"
+        android:pathData="M102,140C102,113.49 123.49,92 150,92H362C388.51,92 410,113.49 410,140V372C410,398.51 388.51,420 362,420H150C123.49,420 102,398.51 102,372V140Z" />
+    <!-- 记账线条：由深到浅的暖色层次 -->
+    <path
+        android:pathData="M142,166H370"
+        android:strokeColor="#2A2E32"
+        android:strokeLineCap="round"
+        android:strokeWidth="20" />
+    <path
+        android:pathData="M154,232H296"
+        android:strokeColor="#A4432D"
+        android:strokeLineCap="round"
+        android:strokeWidth="18" />
+    <path
+        android:pathData="M154,286H348"
+        android:strokeColor="#CFA08C"
+        android:strokeLineCap="round"
+        android:strokeWidth="18" />
+    <path
+        android:pathData="M154,340H248"
+        android:strokeColor="#DFC9BE"
+        android:strokeLineCap="round"
+        android:strokeWidth="18" />
+    <!-- 赤陶徽标 -->
+    <path
+        android:fillColor="#A4432D"
+        android:pathData="M350,204A28,28 0,1 0,350 260A28,28 0,1 0,350 204Z" />
+    <path
+        android:pathData="M338,232L348,242L366,220"
+        android:strokeColor="#FEFDFA"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="9" />
+</vector>

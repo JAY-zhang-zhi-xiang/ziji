@@ -1,0 +1,1725 @@
+:root {
+  color-scheme: light;
+  /* 与 Android 端 SettingsActivity 的 COLOR_* 同一套值，两端不再各调各的。 */
+  --ink: #2a2e32;
+  --ink-soft: #585f65;
+  --ink-faint: #92989e;
+  --paper: #ece8e0;
+  --paper-light: #fefdfa;
+  --paper-deep: #e4dfd6;
+  --accent: #a4432d;
+  --accent-deep: #7e3221;
+  --accent-soft: #f6ddd3;
+  --brown: #6f6862;
+  --brown-soft: #e7e1d7;
+  --orange: #c8894a;
+  --red: #9b3226;
+  --red-soft: #f6e2db;
+  --income: #2f7a5f;
+  --income-soft: #e0eee5;
+  --blue: #6c8fa8;
+  --line: rgba(15, 18, 22, 0.08);
+  --line-strong: #ded8ce;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "HarmonyOS Sans SC",
+    "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  /* 数字单独一套：只为了 tabular-nums 对齐，不是衬线体。 */
+  --font-numeric: var(--font-sans);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-button: 12px;
+  --radius-card: 16px;
+  --radius-pill: 999px;
+
+  --shadow-flat: 0 1px 2px rgba(15, 18, 22, 0.04), 0 0 0 1px var(--line);
+  --shadow-raised: 0 2px 14px rgba(15, 18, 22, 0.07);
+  --shadow-overlay: 0 12px 32px rgba(15, 18, 22, 0.14);
+
+  --fast: 150ms ease;
+  --slow: 320ms cubic-bezier(0.21, 0.78, 0.28, 1);
+  font-family: var(--font-sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--paper);
+}
+
+body {
+  position: relative;
+  min-height: 100vh;
+  margin: 0;
+  color: var(--ink);
+  overflow-x: hidden;
+  background: transparent;
+}
+
+body::before,
+body::after {
+  display: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+label {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * 图标精灵只是 <symbol> 的容器。HTML 上写的 hidden 属性在这里不生效：
+ * SVG 默认按 inline 元素排版，会实打实占掉 150px 高度。
+ * 结果就是每台手机打开都先看到一片空白，再往下才是内容。
+ */
+.icon-sprite {
+  display: none;
+}
+
+.app-shell {
+  display: grid;
+  /* 列宽必须显式收窄：grid 列默认按内容宽度，tab 栏的 min-content（5×108px）
+     会把整个 phone-frame 撑到视口之外，右侧内容被裁掉。 */
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 100vh;
+  padding: max(18px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
+  place-items: center;
+}
+
+.phone-frame {
+  position: relative;
+  width: min(100%, 1120px);
+  min-height: min(900px, calc(100vh - 28px));
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--paper);
+  box-shadow: var(--shadow-raised);
+}
+
+.phone-frame::before,
+.phone-frame::after {
+  display: none;
+}
+
+.hero,
+.tabbar,
+.screen {
+  position: relative;
+  z-index: 1;
+}
+
+.hero {
+  min-height: 170px;
+  padding: 22px clamp(20px, 5vw, 54px) 25px;
+  color: var(--ink);
+  background: var(--paper);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.hero::after {
+  display: none;
+}
+
+.status-row,
+.hero-grid,
+.month-card,
+.section-heading,
+.action-row,
+.filter-row,
+.rule-form,
+.budget-editor {
+  display: flex;
+  align-items: center;
+}
+
+.status-row {
+  gap: var(--space-2);
+  margin-bottom: 24px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(164, 67, 45, 0.12);
+}
+
+.hero-grid {
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.eyebrow {
+  margin: 0 0 5px;
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.hero .eyebrow {
+  color: var(--accent);
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0;
+  font-family: var(--font-sans);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  margin-bottom: 0;
+  font-family: var(--font-sans);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.month-card {
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.month-card span,
+.month-card small {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.month-card strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-family: var(--font-numeric);
+  font-size: clamp(32px, 7vw, 46px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.month-card small {
+  max-width: 170px;
+  margin-bottom: 3px;
+  text-align: right;
+  line-height: 1.5;
+}
+
+.tabbar {
+  display: flex;
+  gap: 6px;
+  padding: 12px clamp(12px, 4vw, 42px);
+  overflow-x: auto;
+  background: var(--paper-light);
+  border-bottom: 1px solid var(--line-strong);
+  scrollbar-width: none;
+}
+
+.tabbar::-webkit-scrollbar,
+.filter-row::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-button {
+  position: relative;
+  /* 可增长也可收缩：5 个 tab 在 430px 屏上是 5×108=540，
+     shrink 为 0 时第 5 个会被裁到视口外，「自动化」页根本点不到。 */
+  flex: 1 1 108px;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  color: var(--ink-soft);
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: color var(--fast), background var(--fast);
+}
+
+.tab-button.active {
+  color: var(--paper-light);
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 1px 2px rgba(126, 50, 33, 0.24);
+}
+
+.tab-button.active::after {
+  display: none;
+}
+
+.tab-button:active,
+.primary-button:active,
+.secondary-button:active,
+.ghost-button:active,
+.danger-button:active,
+.mini-button:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.tab-button.active:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.screen {
+  display: none;
+  padding: clamp(16px, 3vw, 32px) clamp(16px, 5vw, 54px) 42px;
+  animation: riseIn var(--slow) both;
+}
+
+.screen.active {
+  display: block;
+}
+
+.capture-card,
+.section-card,
+.pending-panel,
+.insight-strip {
+  position: relative;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--paper-light);
+  box-shadow: var(--shadow-flat);
+}
+
+.autopilot-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 var(--space-3);
+  padding: 13px 14px;
+  border: 1px solid rgba(164, 67, 45, 0.18);
+  border-radius: var(--radius-button);
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+}
+
+.autopilot-callout.is-connected {
+  border-color: rgba(164, 67, 45, 0.36);
+  background: #f2d3c7;
+}
+
+.autopilot-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--paper-light);
+  background: var(--accent);
+}
+
+.autopilot-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.autopilot-callout strong {
+  display: block;
+  margin-top: 1px;
+  font-size: 15px;
+}
+
+.autopilot-callout p {
+  margin: 3px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.automation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.automation-actions .muted-copy {
+  margin: 0;
+}
+
+.capture-card::before,
+.section-card::before,
+.pending-panel::before {
+  display: none;
+}
+
+.capture-card,
+.section-card,
+.pending-panel {
+  padding: clamp(15px, 3vw, 23px);
+}
+
+.section-heading {
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.section-heading > div {
+  min-width: 0;
+}
+
+textarea,
+input,
+select {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-button);
+  outline: none;
+  color: var(--ink);
+  background: #FFFFFF;
+  transition: border var(--fast), box-shadow var(--fast), background var(--fast);
+}
+
+textarea {
+  min-height: 150px;
+  padding: 14px 16px;
+  resize: vertical;
+  line-height: 1.65;
+  background: #ffffff;
+}
+
+input,
+select {
+  min-height: 44px;
+  padding: 0 13px;
+}
+
+textarea:focus,
+input:focus,
+select:focus {
+  border-color: var(--accent);
+  background: var(--paper-light);
+  box-shadow: 0 0 0 3px rgba(164, 67, 45, 0.12);
+}
+
+.action-row {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.primary-button,
+.secondary-button,
+.ghost-button,
+.danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 700;
+  transition: transform var(--fast), background var(--fast), border var(--fast);
+}
+
+.primary-button {
+  color: var(--paper-light);
+  background: var(--accent);
+  border-color: var(--accent-deep);
+  box-shadow: 0 1px 2px rgba(126, 50, 33, 0.2);
+}
+
+.secondary-button {
+  border-color: var(--line-strong);
+  color: var(--accent-deep);
+  background: #FFFFFF;
+}
+
+.ghost-button {
+  min-height: 36px;
+  padding: 0 12px;
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+  border-color: rgba(164, 67, 45, 0.24);
+}
+
+.danger-button {
+  color: #fff8eb;
+  background: var(--red);
+  border-color: #9c5147;
+}
+
+.compact {
+  min-height: 42px;
+}
+
+.file-trigger {
+  position: relative;
+  overflow: hidden;
+}
+
+.file-trigger input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.privacy-note,
+.muted-copy {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.pending-panel,
+.section-card,
+.insight-strip {
+  margin-top: 18px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(164, 67, 45, 0.24);
+  border-radius: var(--radius-sm);
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pending-list,
+.ledger-list,
+.rule-list,
+.category-chart,
+.setup-steps {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.empty-state {
+  padding: 22px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-button);
+  color: var(--ink-soft);
+  text-align: center;
+  background: var(--paper);
+}
+
+.pending-item,
+.ledger-item,
+.rule-item,
+.setup-step {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-button);
+  background: #FFFFFF;
+}
+
+.pending-item {
+  padding: var(--space-3);
+}
+
+.pending-top,
+.ledger-item,
+.rule-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.merchant {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 700;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.meta span {
+  padding: 4px 7px;
+  border-radius: var(--radius-sm);
+  background: rgba(232, 220, 198, 0.72);
+}
+
+.meta span.system-tag {
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+}
+
+.meta span.auto-tag {
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+}
+
+.amount {
+  color: var(--red);
+  font-family: var(--font-numeric);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.amount.income {
+  color: var(--income);
+}
+
+.amount.transfer {
+  color: var(--ink-soft);
+}
+
+.transfer-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.manual-entry-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.manual-entry-form .field,
+.manual-entry-form .direction-choice {
+  min-width: 0;
+}
+
+.manual-entry-form .manual-note-field {
+  grid-column: span 2;
+}
+
+.manual-entry-form > button {
+  justify-self: start;
+}
+
+.direction-choice {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.direction-choice legend {
+  margin-bottom: 4px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.segmented-control {
+  display: flex;
+  min-height: 44px;
+  padding: 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-button);
+  background: rgba(232, 220, 198, 0.5);
+}
+
+.segmented-control label {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.segmented-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.segmented-control span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-weight: 700;
+}
+
+.segmented-control input:checked + span {
+  color: var(--accent-deep);
+  background: var(--paper-light);
+  box-shadow: 1px 1px 0 rgba(89, 65, 43, 0.12);
+}
+
+.segmented-control input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.transfer-form select,
+.transfer-form input {
+  flex: 1 1 130px;
+}
+
+.transfer-form .field select,
+.transfer-form .field input {
+  flex: 1 1 auto;
+}
+
+.transfer-form button {
+  flex: 0 0 auto;
+}
+
+.ledger-item.transfer .ledger-icon {
+  color: var(--ink-soft);
+  background: rgba(232, 220, 198, 0.72);
+}
+
+.ledger-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.pending-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.mini-button {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  background: rgba(232, 220, 198, 0.62);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.mini-button.accept {
+  color: var(--paper-light);
+  background: var(--accent);
+  border-color: var(--accent-deep);
+}
+
+.mini-button.reject {
+  color: var(--red);
+  background: var(--red-soft);
+  border-color: rgba(189, 101, 87, 0.24);
+}
+
+.confidence {
+  position: relative;
+  height: 7px;
+  margin-top: var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: rgba(232, 220, 198, 0.7);
+}
+
+.confidence span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.insight-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.insight-strip div {
+  min-width: 0;
+  padding: 12px;
+  border-right: 1px solid var(--line-strong);
+}
+
+.insight-strip div:last-child {
+  border-right: 0;
+}
+
+.insight-strip span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 15px;
+}
+
+.insight-strip strong {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-numeric);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-row {
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ledger-search-field {
+  display: block;
+  margin: 0 0 var(--space-2);
+}
+
+.ledger-search-field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-button);
+  color: var(--ink);
+  background: #ffffff;
+  font: inherit;
+}
+
+.ledger-search-field input:focus {
+  outline: 2px solid rgba(164, 67, 45, 0.24);
+  outline-offset: 2px;
+  border-color: var(--accent);
+}
+
+.filter-chip {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+  background: rgba(232, 220, 198, 0.5);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.filter-chip.active {
+  color: var(--paper-light);
+  background: var(--accent);
+  border-color: var(--accent-deep);
+}
+
+.ledger-item {
+  padding: var(--space-3);
+}
+
+.ledger-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+  place-items: center;
+}
+
+.ledger-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ledger-main {
+  min-width: 0;
+  margin-right: auto;
+}
+
+.chart-row {
+  display: grid;
+  grid-template-columns: minmax(48px, 70px) 1fr minmax(52px, 64px);
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.chart-row > strong:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-row > span:last-child {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.chart-track {
+  display: block;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--brown-soft);
+}
+
+/* display 必须显式写：span 默认 inline，height / width 对 inline 元素无效，
+   结果就是轨道画出来了、填充条永远 0×0。 */
+.chart-bar {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.rule-form,
+.budget-editor,
+.confidence-editor,
+.toggle-row {
+  gap: var(--space-2);
+}
+
+.field {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 130px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field > span {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.rule-form input {
+  flex: 1 1 130px;
+}
+
+.rule-form select {
+  flex: 0 0 108px;
+}
+
+.rule-item {
+  padding: 10px 12px;
+}
+
+.rule-item button {
+  min-height: 40px;
+  padding: 0 8px;
+  color: var(--red);
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.budget-meter {
+  height: 12px;
+  margin-top: var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: rgba(232, 220, 198, 0.62);
+}
+
+.budget-meter span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--slow), background var(--fast);
+}
+
+.budget-meter span.over-budget {
+  background: var(--red);
+}
+
+.toggle-row {
+  display: flex;
+  align-items: flex-start;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-button);
+  background: var(--paper-light);
+}
+
+.toggle-row input {
+  flex: 0 0 auto;
+  width: 22px;
+  min-height: 22px;
+  margin: 2px 6px 0 0;
+  accent-color: var(--accent);
+}
+
+.toggle-row span {
+  display: grid;
+  gap: 4px;
+}
+
+.toggle-row small {
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.confidence-editor {
+  display: grid;
+  grid-template-columns: 1fr 86px auto;
+  align-items: center;
+  margin-top: var(--space-3);
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.confidence-editor input {
+  min-height: 44px;
+  text-align: center;
+}
+
+.setup-step {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.setup-step > span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--paper-light);
+  background: var(--accent);
+  font-family: var(--font-numeric);
+  font-weight: 700;
+  place-items: center;
+}
+
+.setup-step.caution > span {
+  color: var(--paper-light);
+  background: var(--orange);
+}
+
+.setup-step strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.setup-step p {
+  margin-bottom: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.danger-zone {
+  margin-bottom: 12px;
+}
+
+.pending-item.is-duplicate {
+  border-color: rgba(189, 101, 87, 0.42);
+  background: rgba(242, 217, 204, 0.54);
+}
+
+.duplicate-hint {
+  margin: 8px 0 -4px;
+  padding: 7px 10px;
+  border: 1px dashed rgba(189, 101, 87, 0.42);
+  border-radius: 8px;
+  color: var(--red);
+  background: rgba(242, 217, 204, 0.56);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(408px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 247, 224, 0.22);
+  border-left: 3px solid var(--orange);
+  border-radius: var(--radius-button);
+  color: #fff8e7;
+  background: var(--accent-deep);
+  box-shadow: var(--shadow-overlay);
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity var(--fast), transform var(--fast);
+  pointer-events: none;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.toast.success {
+  border-left-color: var(--accent-soft);
+}
+
+.toast.error {
+  border-left-color: var(--red);
+}
+
+.toast.info {
+  border-left-color: var(--orange);
+}
+
+.toast-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.toast-undo {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: #fff8e7;
+  background: rgba(255, 249, 229, 0.16);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.toast-close {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: #fff8e7;
+  background: rgba(255, 249, 229, 0.16);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(47, 43, 35, 0.48);
+  animation: fadeInBg var(--fast) both;
+}
+
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 480px;
+  max-height: min(88vh, 720px, var(--viewport-max-height, 100vh));
+  border: 1px solid var(--line-strong);
+  border-bottom: 0;
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  background: var(--paper-light);
+  box-shadow: var(--shadow-overlay);
+  animation: slideUpSheet var(--slow) both;
+}
+
+.modal-title {
+  margin: 0;
+  padding: 20px 20px 12px;
+  font-family: var(--font-sans);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 0 20px 16px;
+  overflow-y: auto;
+}
+
+.modal-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+}
+
+.modal-input {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-button);
+  background: #FFFFFF;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.modal-input:focus {
+  border-color: var(--accent);
+}
+
+.modal-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 12px 20px max(16px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line-strong);
+  background: var(--paper-light);
+}
+
+.modal-actions-right {
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.modal-delete {
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: 13px;
+  background: transparent;
+  color: var(--red);
+  border: 1px solid rgba(189, 101, 87, 0.32);
+}
+
+.ledger-edit-btn {
+  display: grid;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  color: var(--ink-soft);
+  background: transparent;
+  place-items: center;
+  transition: background var(--fast);
+}
+
+.ledger-edit-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ledger-edit-btn:hover,
+.ledger-edit-btn:active {
+  background: rgba(232, 220, 198, 0.65);
+}
+
+.entity-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.entity-form input {
+  flex: 1 1 140px;
+}
+
+.entity-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.entity-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-button);
+  background: #FFFFFF;
+}
+
+.entity-item.archived {
+  opacity: 0.55;
+}
+
+.entity-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+  place-items: center;
+}
+
+.entity-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.entity-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.entity-static-name {
+  font-weight: 600;
+}
+
+.entity-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0 4px;
+}
+
+.entity-name-input:focus {
+  border-color: var(--accent);
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.entity-tag {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+  background: rgba(232, 220, 198, 0.7);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.entity-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.icon-btn {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  color: var(--ink-soft);
+  background: transparent;
+  place-items: center;
+  transition: background var(--fast);
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.icon-btn:hover,
+.icon-btn:active {
+  background: rgba(232, 220, 198, 0.65);
+}
+
+.icon-btn:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.icon-btn.danger {
+  color: var(--red);
+}
+
+.icon-btn.chevron-up svg {
+  transform: rotate(180deg);
+}
+
+.icon-btn.chevron-left svg {
+  transform: rotate(90deg);
+}
+
+.icon-btn.chevron-right svg {
+  transform: rotate(-90deg);
+}
+
+.period-nav {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.report-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+}
+
+.report-stats div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-button);
+  background: var(--paper);
+}
+
+.report-stats div:last-child {
+  border-right: 1px solid var(--line-strong);
+}
+
+.report-stats span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 15px;
+}
+
+.report-stats strong {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-numeric);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.money-out {
+  color: var(--red);
+}
+
+.money-in {
+  color: var(--income);
+}
+
+.balance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 12px var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-button);
+  background: #FFFFFF;
+}
+
+.balance-row span {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.balance-row strong {
+  flex: 0 0 auto;
+  font-family: var(--font-numeric);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.toast-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+}
+
+.toast-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+@keyframes fadeInBg {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUpSheet {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* 宽屏上 5 个 tab 会各分到 200+ px，中间空得能跑马；内容行也太长。
+   这里把导航收成居中一组、正文限制在 760px，保持和手机端一致的密度。 */
+@media (min-width: 681px) {
+  .tabbar {
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .tab-button {
+    flex: 0 0 auto;
+    min-width: 96px;
+    padding: 0 22px;
+  }
+
+  .screen {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  /* 头部和正文对齐：正文已经收到 760px 居中，hero 还按整条 1120 排就会错位。 */
+  .hero {
+    padding-right: max(54px, calc((100% - 760px) / 2));
+    padding-left: max(54px, calc((100% - 760px) / 2));
+  }
+}
+
+@media (max-width: 680px) {
+  .app-shell {
+    padding: 0;
+  }
+
+  .phone-frame {
+    min-height: 100vh;
+    border-radius: 0;
+  }
+
+  .hero {
+    padding-top: max(20px, env(safe-area-inset-top));
+  }
+
+  .phone-frame::before {
+    right: 12px;
+    left: 12px;
+  }
+
+  .screen {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+}
+
+@media (max-width: 430px) {
+  .hero {
+    min-height: 152px;
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .hero::after {
+    right: 24px;
+  }
+
+  .tab-button {
+    flex-basis: 86px;
+    font-size: 15px;
+  }
+
+  .insight-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .insight-strip div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .insight-strip div:last-child {
+    border-bottom: 0;
+  }
+
+  /* 手机上三块竖排会吃掉半屏；并排三列，金额用紧凑字号仍读得清。 */
+  .report-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .report-stats div {
+    padding: 10px;
+    border-right: 1px solid var(--line-strong);
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .report-stats div:last-child {
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .report-stats span {
+    margin-bottom: 4px;
+    font-size: 12px;
+  }
+
+  .report-stats strong {
+    font-size: 13px;
+  }
+
+  .rule-form,
+  .budget-editor,
+  .confidence-editor,
+  .transfer-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* 竖排之后 flex-basis 变成了高度：输入框会被拉成 130px 高、下拉框 108px 高。
+     这里必须把它交还给内容高度；字段容器同理，否则 flex-grow 会把间距撑开。 */
+  .rule-form input,
+  .rule-form select,
+  .budget-editor input,
+  .transfer-form input,
+  .transfer-form select,
+  .rule-form .field,
+  .budget-editor .field,
+  .transfer-form .field,
+  .confidence-editor .field {
+    flex: 0 0 auto;
+  }
+
+  .manual-entry-form {
+    grid-template-columns: 1fr;
+  }
+
+  .manual-entry-form .manual-note-field {
+    grid-column: auto;
+  }
+
+  .manual-entry-form > button {
+    width: 100%;
+  }
+
+  .confidence-editor {
+    display: flex;
+  }
+
+  .chart-row {
+    grid-template-columns: 44px 1fr 48px;
+    font-size: 12px;
+  }
+
+  .entity-item {
+    flex-wrap: wrap;
+  }
+
+  .entity-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+}

@@ -1,0 +1,11 @@
+data/*.json
+data/bridge-token.txt
+data/
+.tmp/
+.android-sdk/
+android-companion/build/
+android-companion/.gradle/
+android-companion/local.properties
+node_modules/
+.workbuddy/
+*.log

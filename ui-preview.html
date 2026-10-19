@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>自记 · UI 改版预览（fanqie 风格）</title>
+<style>
+  :root {
+    /* 与 SettingsActivity.java 中的常量一一对应 */
+    --header: #ECE8E0;
+    --bg: #ECE8E0;
+    --surface: #FEFDFA;
+    --border: #DED8CE;
+    --border-soft: #EAE5DC;
+    --text: #2A2E32;
+    --muted: #585F65;
+    --faint: #92989E;
+    --primary: #A4432D;
+    --primary-dark: #7E3221;
+    --primary-soft: #F6DDD3;
+    --secondary: #E2DDD4;
+    --expense: #A4432D;
+    --income: #2F7A5F;
+    --expense-soft: #F6E2DB;
+    --income-soft: #E0EEE5;
+    --shadow-soft: 0 2px 14px rgba(15,18,22,.07), 0 1px 3px rgba(15,18,22,.05);
+    --shadow-lift: 0 12px 30px -12px rgba(15,18,22,.18), 0 2px 8px -2px rgba(15,18,22,.08);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 24px 56px;
+    background: #F4F1EA; color: var(--text);
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page-title { max-width: 1180px; margin: 0 auto 6px; font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
+  .page-sub { max-width: 1180px; margin: 0 auto 22px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+
+  /* ---- 配色条 ---- */
+  .palette { max-width: 1180px; margin: 0 auto 28px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .swatch { flex: 1 1 92px; min-width: 92px; }
+  .swatch .chip { height: 40px; border-radius: 10px; border: 1px solid rgba(0,0,0,.06); }
+  .swatch .name { margin-top: 6px; font-size: 10.5px; color: var(--muted); letter-spacing: .02em; }
+  .swatch .hex { font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  /* ---- 手机框 ---- */
+  .frames { max-width: 1180px; margin: 0 auto; display: flex; gap: 26px; flex-wrap: wrap; align-items: flex-start; }
+  .frame-wrap { flex: 0 0 340px; }
+  .frame-label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .06em; margin: 0 0 10px 4px; text-transform: uppercase; }
+  .phone {
+    width: 340px; height: 720px; border-radius: 30px; background: var(--bg);
+    border: 1px solid var(--border); box-shadow: var(--shadow-lift);
+    overflow: hidden; display: flex; flex-direction: column; position: relative;
+  }
+  .statusbar { height: 26px; background: var(--header); display: flex; align-items: center; justify-content: space-between; padding: 0 18px; font-size: 10px; color: var(--muted); }
+  .scroll { flex: 1; overflow-y: auto; padding: 16px 18px 20px; }
+  .scroll::-webkit-scrollbar { width: 0; }
+
+  /* ---- 通用 ---- */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; box-shadow: var(--shadow-soft); }
+  .card + .card { margin-top: 12px; }
+  .card.flat { border: none; box-shadow: none; }
+  .sec-title { font-size: 19px; font-weight: 600; letter-spacing: -.01em; }
+  .sec-sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .divider { height: 1px; background: var(--border-soft); }
+
+  /* ---- 首页 ---- */
+  .home-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .home-head h2 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.02em; }
+  .pill { font-size: 12px; color: var(--muted); border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 7px 13px; }
+
+  .amount-label { font-size: 13px; color: var(--muted); letter-spacing: .06em; }
+  .amount-big { font-size: 40px; font-weight: 600; letter-spacing: -.03em; margin: 6px 0 16px; }
+  .metrics { display: flex; padding-top: 14px; }
+  .metric { flex: 1; font-size: 15px; font-weight: 600; line-height: 1.25; white-space: pre-line; }
+
+  .insight { background: var(--primary-soft); border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .insight .dot { color: var(--primary); font-size: 15px; }
+  .insight .t { font-size: 14px; font-weight: 600; color: var(--primary-dark); flex: 1; }
+  .insight .h { font-size: 12px; color: var(--muted); }
+
+  .filters { display: flex; gap: 8px; margin: 16px 0 14px; }
+  .chip { font-size: 15px; font-weight: 600; padding: 10px 0; flex: 1; text-align: center; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  .chip.on { background: var(--primary); color: #fff; border-color: transparent; }
+
+  .entry { display: flex; align-items: center; gap: 13px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-soft); }
+  .entry + .entry { margin-top: 10px; }
+  .entry .ico { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 21px; flex: 0 0 46px; }
+  .entry .ico.exp { background: var(--expense-soft); color: var(--expense); }
+  .entry .ico.inc { background: var(--income-soft); color: var(--income); }
+  .entry .ico svg { stroke: currentColor; }
+  .entry .ico.inc { background: var(--income-soft); }
+  .entry .mid { flex: 1; min-width: 0; }
+  .entry .merchant { font-size: 16px; font-weight: 600; }
+  .entry .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .entry .amt { font-size: 17px; font-weight: 600; white-space: nowrap; }
+  .amt.exp { color: var(--expense); }
+  .amt.inc { color: var(--income); }
+
+  /* ---- 统计 ---- */
+  .stat-row { display: flex; }
+  .stat { flex: 1; }
+  .stat .k { font-size: 12px; color: var(--muted); letter-spacing: .05em; }
+  .stat .v { font-size: 20px; font-weight: 600; letter-spacing: -.02em; margin-top: 5px; }
+  .rank { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+  .rank .no { font-size: 12px; font-weight: 600; color: var(--primary); letter-spacing: .05em; width: 28px; }
+  .rank .body { flex: 1; }
+  .rank .cat { font-size: 15px; font-weight: 600; }
+  .rank .bar { height: 3px; border-radius: 2px; background: var(--border-soft); margin-top: 6px; overflow: hidden; }
+  .rank .bar > i { display: block; height: 100%; background: var(--primary); border-radius: 2px; }
+  .rank .val { font-size: 15px; font-weight: 600; }
+
+  /* ---- 自动记 ---- */
+  .state { font-size: 15px; font-weight: 600; }
+  .state.on { color: var(--primary); }
+  .state.off { color: var(--muted); }
+  .status-line { font-size: 14px; color: var(--muted); margin-top: 10px; }
+  .help { font-size: 14px; color: var(--muted); line-height: 1.6; margin-top: 10px; }
+  .btn { display: block; width: 100%; text-align: center; font-size: 15px; font-weight: 600; letter-spacing: .01em; padding: 14px 0; border-radius: 12px; border: none; margin-top: 8px; font-family: var(--font); }
+  .btn.primary { background: var(--primary); color: #fff; box-shadow: var(--shadow-soft); }
+  .btn.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
+  /* ---- 底部导航 ---- */
+  .nav { height: 62px; background: var(--surface); border-top: 1px solid var(--border-soft); display: flex; align-items: center; padding: 8px 10px; box-shadow: 0 -2px 12px rgba(15,18,22,.05); }
+  .nav-item { flex: 1; height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: 12px; }
+  .nav-item .ni { color: var(--faint); line-height: 1; display:flex; align-items:center; justify-content:center; }
+  .nav-item .ni svg { stroke: currentColor; }
+  .nav-item .nl { font-size: 11px; color: var(--muted); }
+  .nav-item.on { background: var(--primary-soft); }
+  .nav-item.on .ni { color: var(--primary); }
+  .nav-item.on .nl { color: var(--primary-dark); font-weight: 600; }
+  .fab { flex: 0 0 58px; height: 52px; margin: 0 10px; border-radius: 999px; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-soft); }
+  .fab svg { stroke: #fff; }
+
+  .note { max-width: 1180px; margin: 30px auto 0; font-size: 13px; color: var(--muted); line-height: 1.75; }
+  .note b { color: var(--text); }
+</style>
+</head>
+<body>
+  <h1 class="page-title">自记 · UI 改版预览</h1>
+  <p class="page-sub">按 fanqie-homepage 的设计语言重构：暖灰纸感底色 + 赤陶强调色 + 16px 圆角 + 细描边 + 克制投影 + 无衬线字体。左侧第一屏是你打开 App 看到的界面。</p>
+
+  <div class="palette">
+    <div class="swatch"><div class="chip" style="background:#ECE8E0"></div><div class="name">底色</div><div class="hex">#ECE8E0</div></div>
+    <div class="swatch"><div class="chip" style="background:#FEFDFA"></div><div class="name">卡片</div><div class="hex">#FEFDFA</div></div>
+    <div class="swatch"><div class="chip" style="background:#A4432D"></div><div class="name">强调（赤陶）</div><div class="hex">#A4432D</div></div>
+    <div class="swatch"><div class="chip" style="background:#7E3221"></div><div class="name">强调·深</div><div class="hex">#7E3221</div></div>
+    <div class="swatch"><div class="chip" style="background:#F6DDD3"></div><div class="name">强调·浅</div><div class="hex">#F6DDD3</div></div>
+    <div class="swatch"><div class="chip" style="background:#2F7A5F"></div><div class="name">收入绿</div><div class="hex">#2F7A5F</div></div>
+    <div class="swatch"><div class="chip" style="background:#2A2E32"></div><div class="name">正文</div><div class="hex">#2A2E32</div></div>
+    <div class="swatch"><div class="chip" style="background:#DED8CE"></div><div class="name">描边</div><div class="hex">#DED8CE</div></div>
+  </div>
+
+  <div class="frames">
+
+    <!-- ========== 明细 ========== -->
+    <div class="frame-wrap">
+      <p class="frame-label">明细</p>
+      <div class="phone">
+        <div class="statusbar"><span>11:39</span><span>自记</span><span>100%</span></div>
+        <div class="scroll">
+          <div class="home-head"><h2>本月概览</h2><span class="pill">10月17日 · 今日</span></div>
+
+          <div class="card" style="padding:20px 22px 18px">
+            <div class="amount-label">本月支出</div>
+            <div class="amount-big">¥1,286.40</div>
+            <div class="divider"></div>
+            <div class="metrics">
+              <div class="metric">今日
+¥86.50</div>
+              <div class="metric">账单数
+27 笔</div>
+            </div>
+          </div>
+
+          <div class="insight">
+            <span class="dot">●</span>
+            <span class="t">自动记账已开启</span>
+            <span class="h">通知到账后自动记录</span>
+          </div>
+
+          <div class="filters">
+            <span class="chip on">全部</span>
+            <span class="chip">支出</span>
+            <span class="chip">收入</span>
+          </div>
+
+          <div class="entry">
+            <div class="ico exp"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 2-2.3 2.3a3 3 0 0 0 0 4.2l1.8 1.8a3 3 0 0 0 4.2 0L22 8" /><path d="M15 15 3.3 3.3a4.2 4.2 0 0 0 0 6l7.3 7.3c.7.7 2 .7 2.8 0L15 15Zm0 0 7 7" /><path d="m2.1 21.8 6.4-6.3" /><path d="m19 5-7 7" /></svg></div>
+            <div class="mid"><div class="merchant">美团外卖</div><div class="meta">餐饮 · 微信 · 10-17 11:20</div></div>
+            <div class="amt exp">−¥46.80</div>
+          </div>
+          <div class="entry">
+            <div class="ico exp"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 17h.01" /><path d="M11.496 2c.324-.016.558.292.529.615a4 4 0 004.235 4.368.713.713 0 01.758.757 4 4 0 004.366 4.237c.323-.03.63.204.614.527a10 10 0 01-2.915 6.566A1 1 0 114.93 4.918 10 10 0 0111.496 2" /><path d="M12 12h.01" /><path d="M16 16h.01" /><path d="M16 3h.01" /><path d="M21 4h.01" /><path d="M21 8h.01" /><path d="M7 14h.01" /><path d="M9 8h.01" /></svg></div>
+            <div class="mid"><div class="merchant">永辉超市</div><div class="meta">零食 · 银行卡 · 10-17 09:12</div></div>
+            <div class="amt exp">−¥128.60</div>
+          </div>
+          <div class="entry">
+            <div class="ico inc"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 7 7 17" /><path d="M17 17H7V7" /></svg></div>
+            <div class="mid"><div class="merchant">张三</div><div class="meta">收转账 · 微信 · 10-16 22:04</div></div>
+            <div class="amt inc">+¥0.01</div>
+          </div>
+          <div class="entry">
+            <div class="ico exp"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6 2 7" /><path d="M10 6h4" /><path d="m22 7-2-1" /><path d="M4 11h16" /><path d="M8 15h.01" /><path d="M16 15h.01" /><path d="M6 19v2" /><path d="M18 21v-2" /><path d="M6.0,3.0 H18.0 A2.0,2.0 0 0,1 20.0,5.0 V17.0 A2.0,2.0 0 0,1 18.0,19.0 H6.0 A2.0,2.0 0 0,1 4.0,17.0 V5.0 A2.0,2.0 0 0,1 6.0,3.0 Z" /></svg></div>
+            <div class="mid"><div class="merchant">滴滴出行</div><div class="meta">交通 · 支付宝 · 10-16 18:33</div></div>
+            <div class="amt exp">−¥20.00</div>
+          </div>
+          <div class="entry">
+            <div class="ico exp"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 10a4 4 0 0 1-8 0" /><path d="M3.103 6.034h17.794" /><path d="M3.4 5.467a2 2 0 0 0-.4 1.2V20a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.667a2 2 0 0 0-.4-1.2l-2-2.667A2 2 0 0 0 17 2H7a2 2 0 0 0-1.6.8z" /></svg></div>
+            <div class="mid"><div class="merchant">星巴克</div><div class="meta">购物 · 支付宝 · 10-16 15:08</div></div>
+            <div class="amt exp">−¥32.00</div>
+          </div>
+        </div>
+        <div class="nav">
+          <div class="nav-item on"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h.01" /><path d="M3 12h.01" /><path d="M3 19h.01" /><path d="M8 5h13" /><path d="M8 12h13" /><path d="M8 19h13" /></svg></span><span class="nl">明细</span></div>
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" /></svg></span><span class="nl">自动记</span></div>
+          <div class="fab"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="M12 5v14" /></svg></div>
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z" /><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /></svg></span><span class="nl">统计</span></div>
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0" /><path d="M7.0,8.0 a5.0,5.0 0 1,0 10.0,0 a5.0,5.0 0 1,0 -10.0,0 Z" /></svg></span><span class="nl">我的</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 统计 ========== -->
+    <div class="frame-wrap">
+      <p class="frame-label">统计</p>
+      <div class="phone">
+        <div class="statusbar"><span>11:39</span><span>自记</span><span>100%</span></div>
+        <div class="scroll">
+          <div class="sec-title">收支统计</div>
+          <div class="sec-sub" style="margin-bottom:12px">看清这个月的钱花在哪里</div>
+
+          <div class="card">
+            <div class="sec-title" style="font-size:17px">收支总览</div>
+            <div class="sec-sub" style="margin-bottom:12px">本月累计</div>
+            <div class="stat-row">
+              <div class="stat"><div class="k">支出</div><div class="v" style="color:var(--expense)">¥1,286.40</div></div>
+              <div class="stat"><div class="k">收入</div><div class="v" style="color:var(--income)">¥3,200.00</div></div>
+              <div class="stat"><div class="k">结余</div><div class="v" style="color:var(--income)">¥1,913.60</div></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="sec-title" style="font-size:17px">每日趋势</div>
+            <div class="sec-sub" style="margin-bottom:10px">本月每天的支出和收入</div>
+            <svg viewBox="0 0 300 120" width="100%" height="120" role="img" aria-label="每日支出趋势">
+              <line x1="8" y1="100" x2="292" y2="100" stroke="#DED8CE" stroke-width="1" />
+              <g fill="#A4432D">
+                <rect x="12"  y="52" width="9" height="48" rx="4" />
+                <rect x="54"  y="74" width="9" height="26" rx="4" />
+                <rect x="96"  y="40" width="9" height="60" rx="4" />
+                <rect x="138" y="84" width="9" height="16" rx="4" />
+                <rect x="180" y="62" width="9" height="38" rx="4" />
+                <rect x="222" y="30" width="9" height="70" rx="4" />
+                <rect x="264" y="70" width="9" height="30" rx="4" />
+              </g>
+              <g fill="#92989E" font-size="9" font-family="sans-serif">
+                <text x="10" y="114">01</text><text x="52" y="114">05</text><text x="94" y="114">10</text>
+                <text x="136" y="114">15</text><text x="178" y="114">20</text><text x="220" y="114">25</text><text x="262" y="114">31</text>
+              </g>
+            </svg>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px">支出   1286.40       收入   3200.00</div>
+          </div>
+
+          <div class="card">
+            <div class="sec-title" style="font-size:17px">分类排行榜</div>
+            <div class="sec-sub" style="margin-bottom:10px">支出按金额从高到低</div>
+            <div class="rank">
+              <div class="no">01</div>
+              <div class="body"><div class="cat">购物</div><div class="bar"><i style="width:88%"></i></div></div>
+              <div class="val">¥528.60</div>
+            </div>
+            <div class="rank">
+              <div class="no">02</div>
+              <div class="body"><div class="cat">餐饮</div><div class="bar"><i style="width:54%"></i></div></div>
+              <div class="val">¥326.80</div>
+            </div>
+            <div class="rank">
+              <div class="no">03</div>
+              <div class="body"><div class="cat">交通</div><div class="bar"><i style="width:32%"></i></div></div>
+              <div class="val">¥192.00</div>
+            </div>
+            <div class="rank">
+              <div class="no">04</div>
+              <div class="body"><div class="cat">住房</div><div class="bar"><i style="width:18%"></i></div></div>
+              <div class="val">¥110.00</div>
+            </div>
+          </div>
+        </div>
+        <div class="nav">
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h.01" /><path d="M3 12h.01" /><path d="M3 19h.01" /><path d="M8 5h13" /><path d="M8 12h13" /><path d="M8 19h13" /></svg></span><span class="nl">明细</span></div>
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" /></svg></span><span class="nl">自动记</span></div>
+          <div class="fab"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="M12 5v14" /></svg></div>
+          <div class="nav-item on"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z" /><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /></svg></span><span class="nl">统计</span></div>
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0" /><path d="M7.0,8.0 a5.0,5.0 0 1,0 10.0,0 a5.0,5.0 0 1,0 -10.0,0 Z" /></svg></span><span class="nl">我的</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 自动记 ========== -->
+    <div class="frame-wrap">
+      <p class="frame-label">自动记</p>
+      <div class="phone">
+        <div class="statusbar"><span>11:39</span><span>自记</span><span>100%</span></div>
+        <div class="scroll">
+          <div class="sec-title">自动记</div>
+          <div class="sec-sub" style="margin-bottom:12px">支付通知识别后会自动进入账本</div>
+
+          <div class="card">
+            <div class="state on">自动记账已开启</div>
+            <div class="status-line">通知通道：已连接 · 10-17 11:20</div>
+            <div class="status-line">通知样本：20 条 · 命中率 0% · 最近 微信</div>
+            <div class="help">只有开启系统通知读取权限，微信、支付宝和银行消费才能自动入账。</div>
+            <div class="status-line" style="margin-top:4px">最近处理：微信 · 已自动入账 · 10-17 11:20</div>
+            <button class="btn primary">开启通知读取权限</button>
+            <button class="btn secondary">查看最近处理记录</button>
+          </div>
+
+          <div class="card">
+            <div class="state on">页面识别已开启</div>
+            <div class="status-line">页面通道：已连接 · 10-17 11:18</div>
+            <div class="help">通知读不到时，用页面识别兜底：支付成功后停在结果页，即可自动记账。只读取微信、支付宝、云闪付和银行页面的文字，不截屏、不读取密码。</div>
+            <button class="btn primary">开启页面识别权限</button>
+            <button class="btn secondary">检查后台运行设置</button>
+          </div>
+        </div>
+        <div class="nav">
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h.01" /><path d="M3 12h.01" /><path d="M3 19h.01" /><path d="M8 5h13" /><path d="M8 12h13" /><path d="M8 19h13" /></svg></span><span class="nl">明细</span></div>
+          <div class="nav-item on"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" /></svg></span><span class="nl">自动记</span></div>
+          <div class="fab"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="M12 5v14" /></svg></div>
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z" /><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /></svg></span><span class="nl">统计</span></div>
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0" /><path d="M7.0,8.0 a5.0,5.0 0 1,0 10.0,0 a5.0,5.0 0 1,0 -10.0,0 Z" /></svg></span><span class="nl">我的</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 我的 ========== -->
+    <div class="frame-wrap">
+      <p class="frame-label">我的</p>
+      <div class="phone">
+        <div class="statusbar"><span>11:39</span><span>自记</span><span>100%</span></div>
+        <div class="scroll">
+          <div class="sec-title">我的</div>
+          <div class="sec-sub" style="margin-bottom:12px">本地账本与应用信息</div>
+
+          <div class="card">
+            <div class="help" style="margin-top:0">账单数据保存在这台手机
+自动记账只需要通知读取权限，手动记账不依赖网络。</div>
+            <button class="btn secondary" style="margin-top:16px">查看自动记账处理记录</button>
+            <button class="btn secondary">管理分类规则</button>
+            <button class="btn secondary">备份账本</button>
+            <button class="btn secondary">从备份恢复</button>
+          </div>
+        </div>
+        <div class="nav">
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h.01" /><path d="M3 12h.01" /><path d="M3 19h.01" /><path d="M8 5h13" /><path d="M8 12h13" /><path d="M8 19h13" /></svg></span><span class="nl">明细</span></div>
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" /></svg></span><span class="nl">自动记</span></div>
+          <div class="fab"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="M12 5v14" /></svg></div>
+          <div class="nav-item"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z" /><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /></svg></span><span class="nl">统计</span></div>
+          <div class="nav-item on"><span class="ni"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0" /><path d="M7.0,8.0 a5.0,5.0 0 1,0 10.0,0 a5.0,5.0 0 1,0 -10.0,0 Z" /></svg></span><span class="nl">我的</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="note">
+    <b>关于预览：</b>这是按改动后的真实数值（颜色、圆角、字号、间距）还原的效果图，用于直观确认风格。真实 App 的字体渲染、投影深度会略有差异，以安装后的实际观感为准。<br>
+    <b>主要改动：</b>① 品牌色由绿改为赤陶 <code>#A4432D</code>；② 底色改为暖灰纸感 <code>#ECE8E0</code>；③ 卡片圆角统一 16px、按钮 12px、标签 999px；④ 按钮字体由衬线改为无衬线，中文不再回退成难看字形；⑤ 账单卡片去掉重复的分类图标，收入改用低饱和绿；⑥ 排行榜增加细比例尺；⑦ 底部导航选中态改为药丸高亮；⑧ 应用图标同步换成赤陶配色。
+  </p>
+</body>
+</html>

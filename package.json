@@ -1,0 +1,23 @@
+{
+  "name": "ziji-ledger",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "start:lan": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\start-lan.ps1",
+    "doctor": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\doctor.ps1",
+    "verify:bridge": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\verify-bridge.ps1",
+    "bridge:verify-samples": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\verify-sample-bridge.ps1",
+    "bridge:preflight": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\preflight-lan.ps1",
+    "android:setup-sdk": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\setup-android-sdk.ps1",
+    "android:build": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\build-android.ps1",
+    "android:install": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\install-android.ps1",
+    "android:deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\deploy-android.ps1",
+    "android:status": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\status-android.ps1",
+    "android:logs": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\log-android.ps1",
+    "check:ready": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\ready-check.ps1",
+    "test": "node tests/parser.test.mjs && node tests/refund.test.mjs && node tests/csv.test.mjs && node tests/server.test.mjs && npm.cmd run test:android",
+    "test:android": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test-android.ps1",
+    "verify:pwa": "node scripts/verify-pwa.mjs"
+  }
+}

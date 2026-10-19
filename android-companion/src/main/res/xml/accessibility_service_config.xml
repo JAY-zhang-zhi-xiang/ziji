@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自记无障碍服务配置。
+
+  设计约束（刻意收紧权限范围）：
+  - 只监听下列支付/银行类 App 的窗口事件，系统设置里也会按 packageNames 过滤，
+    不会接收到其它应用的页面内容。
+  - canRetrieveWindowContent=true 用于读取支付成功页上的金额与商户文本；
+    includeNotImportantViews 帮助兼容部分 ROM 不暴露重要视图的情况。
+  - 不请求 canRequestFilterKeyEvents / canRequestTouchExplorationMode，
+    不截屏、不模拟点击、不读取输入框密码（代码中对 isPassword 节点已跳过）。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeWindowsChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="200"
+    android:packageNames="com.tencent.mm,com.eg.android.alipaygphone,com.unionpay,com.icbc,com.ccb,com.abchina,com.chinamworld.main,com.bankcomm,cmb.pb,com.cmbchina.ccd"
+    android:summary="@string/accessibility_service_summary" />
