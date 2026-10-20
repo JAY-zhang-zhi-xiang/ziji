@@ -31,8 +31,13 @@ public final class ZijiAccessibilityService extends AccessibilityService {
     private static final long COOLDOWN_MILLIS = 1500L;
     /** 主线程提交节流：高频内容变化事件不必每次都进后台线程。 */
     private static final long SUBMIT_THROTTLE_MILLIS = 300L;
-    /** 相同特征页面的去重时间窗：只压同一张页面的重复事件，不阻挡后续真实支付。 */
-    private static final long PAGE_DEDUPE_WINDOW_MILLIS = 10 * 1000L;
+    /**
+     * 相同特征页面的去重时间窗：只压同一张页面的重复事件，不阻挡后续真实支付。
+     * 支付结果页会在屏幕上停留 1~2 分钟并持续触发内容变化事件，10 秒远远不够
+     * （用户实测同一笔 ¥14 在 17:46/47/48 被记了 3 笔）；90 秒内同签名直接跳过，
+     * 更长周期的重复由 LocalLedger 的「同商户同金额 10 分钟」判重兜底。
+     */
+    private static final long PAGE_DEDUPE_WINDOW_MILLIS = 90 * 1000L;
     /** 跨通道去重的时间窗：通知与页面几乎同时到达。 */
     private static final long CROSS_CHANNEL_WINDOW_MILLIS = 2 * 60 * 1000L;
     /** 单次遍历最多看多少个节点，防止超长列表页把 CPU 吃满。 */

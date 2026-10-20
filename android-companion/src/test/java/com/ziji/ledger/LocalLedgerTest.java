@@ -94,7 +94,24 @@ public final class LocalLedgerTest {
         // 同一通道内的重复交给指纹，不能走这条判重逻辑。
         assertFalse(crossChannel.hasSimilar(
                 800L, "expense", "蜜雪冰城", 10_001_000L, 2 * 60 * 1000L, "notification"
-        ), "同通道不算跨通道重复");
+        ), "商户不明的同通道记录不算重复");
+
+        // 用户实测：支付结果页停留期间反复触发内容变化事件，同一笔 ¥14 在
+        // 17:46/17:47/17:48 被记了 3 笔。同通道 + 同商户 + 同金额 + 几分钟内，
+        // 必须判重（旧逻辑「同通道直接跳过」正是这次三连账的根源）。
+        LocalLedger pageLedger = new LocalLedger(50);
+        assertTrue(pageLedger.add(TransactionParser.parse(
+                "com.tencent.mm", "微信支付 支付成功 ¥14.00 商家：红妞包子", 40_000_000L
+        )), "第一笔应入账");
+        assertTrue(pageLedger.hasSimilar(
+                1400L, "expense", "红妞包子", 40_060_000L, 2 * 60 * 1000L, "accessibility", "com.tencent.mm"
+        ), "同通道同商户同金额 1 分钟后重复触发应判重");
+        assertTrue(pageLedger.hasSimilar(
+                1400L, "expense", "红妞包子", 40_120_000L, 2 * 60 * 1000L, "accessibility", "com.tencent.mm"
+        ), "同通道同商户同金额 2 分钟后重复触发应判重");
+        assertFalse(pageLedger.hasSimilar(
+                1400L, "expense", "红妞包子", 40_700_000L, 2 * 60 * 1000L, "accessibility", "com.tencent.mm"
+        ), "超过 10 分钟的同商户同金额可能是真实第二笔，不判重");
 
         System.out.println("local ledger tests passed: " + checks);
     }

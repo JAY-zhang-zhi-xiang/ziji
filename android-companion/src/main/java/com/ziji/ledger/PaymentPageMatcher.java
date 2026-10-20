@@ -19,11 +19,15 @@ import java.util.regex.Pattern;
 public final class PaymentPageMatcher {
     /** 支付完成的正向信号。 */
     private static final Pattern SUCCESS_PATTERN = Pattern.compile(
-            "支付成功|付款成功|交易成功|支付完成|付款完成|交易完成|已支付|已付款|扣款成功|消费成功"
+            "支付成功|付款成功|交易成功|支付完成|付款完成|交易完成|扣款成功|消费成功"
                     + "|收款成功|收款到账|退款成功|退款到账|转入成功"
                     + "|转账成功|转账完成|已转账给|已成功转账"
                     + "|等待对方确认收款|对方已收款|对方已确认收款|对方已领取"
     );
+    // 注意：「已支付 / 已付款」刻意不在这份名单里——它们是订单状态页的措辞
+    // （「已支付 ¥14.00 商家已接单」），不是支付结果页的措辞。真实结果页一定有
+    // 「支付成功 / 交易成功」。把状态词当成功信号，用户实测记出了
+    // 「星标 ¥14.00」这种同一笔订单反复入账的幽灵账单。
 
     /** 尚未完成的页面信号，命中即拒绝。 */
     private static final Pattern PENDING_PATTERN = Pattern.compile(
@@ -72,10 +76,15 @@ public final class PaymentPageMatcher {
     /**
      * 订单列表/订单详情页的特征词。这些页面充满历史订单的「交易成功 + 金额」，
      * 是仅次于聊天页的误记账来源；而真正的支付结果页不会出现「待收货/查看物流」
-     * 这类履约状态按钮。
+     * 这类履约状态按钮。履约中的状态页（商家已接单/配送中/骑手）同样要拦：
+     * 它们会以「已支付 + 金额」的形态在订单存续期间反复出现。
      */
     private static final Pattern ORDER_LIST_PATTERN = Pattern.compile(
             "待付款|待发货|待收货|查看物流|申请售后|评价晒单|再来一单|延长收货"
+                    + "|商家已接单|已接单|待接单|配送中|骑手|催单|联系商家|联系骑手"
+                    + "|收货地址|去评价|复制订单号|订单编号|发票|留言|复购"
+                    // 淘宝/京东系订单页特有的履约状态词。
+                    + "|确认收货|等待发货|已发货|申请退款|退款详情|物流信息"
     );
 
     /** 带标签的商户字段，优先级最高。标签后必须紧跟分隔符，避免「对方已收款」被当成商户。 */
@@ -94,6 +103,9 @@ public final class PaymentPageMatcher {
             "支付|付款|成功|失败|完成|金额|余额|方式|时间|订单|详情|确认|取消|返回|关闭|确定|查看|点击|等待|对方"
                     + "|零钱|花呗|余额宝|银行卡|信用卡|储蓄卡|微信|支付宝|云闪付|银联"
                     + "|收款|转账|退款|红包|优惠|积分|账单|明细|首页|消息|我的|设置"
+                    // 界面装饰词/履约状态词：节点扫描兜底会把它们抓成商户名，
+                    // 用户账本上出现过「星标」这种店。宁可记「未知商户」也不记垃圾词。
+                    + "|星标|留言|复购|咨询|接单|配送|骑手|催单|评价|收货|客服|发票|地址|商家"
     );
 
     private PaymentPageMatcher() {
@@ -224,13 +236,28 @@ public final class PaymentPageMatcher {
         if (pkg.equals("com.tencent.mm")
                 || pkg.contains("alipay")
                 || pkg.contains("unionpay")
+                || pkg.contains("sankuai")
+                // 电商/外卖：App 内支付时 SDK 收银台跑在自家进程里（与白名单配套）。
+                || pkg.contains("taobao")
+                || pkg.contains("tmall")
+                || pkg.startsWith("com.jingdong.")
+                || pkg.startsWith("com.jd.")
+                || pkg.contains("xunmeng")
+                || pkg.contains("riming")
+                || pkg.contains("ss.android.ugc")
                 || pkg.contains("bank")
                 || pkg.startsWith("com.icbc")
                 || pkg.startsWith("com.ccb")
                 || pkg.startsWith("com.abchina")
                 || pkg.startsWith("com.chinamworld")
                 || pkg.startsWith("com.bankcomm")
-                || pkg.startsWith("cmb")) {
+                || pkg.startsWith("cmb")
+                || pkg.startsWith("com.spdb.")
+                || pkg.startsWith("com.ecitic.")
+                || pkg.startsWith("com.cgbchina.")
+                || pkg.startsWith("com.pingan.paces")
+                || pkg.startsWith("com.psbc.")
+                || pkg.startsWith("com.cib.")) {
             return true;
         }
         return SOURCE_PATTERN.matcher(title + " " + page).find();

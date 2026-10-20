@@ -13,7 +13,8 @@ public final class NotificationMatcher {
     );
     private static final Pattern INCOME_OR_REFUND_PATTERN = Pattern.compile("退款|退回|收入到账|转入|入账|红包到账|收到红包");
     private static final Pattern SOURCE_PATTERN = Pattern.compile(
-            "微信支付|支付宝|花呗|银行|信用卡|储蓄卡|银行卡|尾号|云闪付|银联|UnionPay|招商银行|工商银行|农业银行|建设银行|中国银行|交通银行|浦发|中信|广发|平安",
+            "微信支付|支付宝|花呗|银行|信用卡|储蓄卡|银行卡|尾号|云闪付|银联|UnionPay|招商银行|工商银行|农业银行|建设银行|中国银行|交通银行|浦发|中信|广发|平安"
+                    + "|美团|美团外卖",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern WECHAT_PAYMENT_SOURCE_PATTERN = Pattern.compile("微信支付|支付收款助手|微信支付收款助手");

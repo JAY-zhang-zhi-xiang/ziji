@@ -85,6 +85,52 @@ public final class PaymentPageMatcherTest {
                 Arrays.asList("交易成功", "¥32.00", "美团外卖", "待收货", "查看物流"), "order_list");
         rejects("alipay order detail", "com.eg.android.alipaygphone", "支付宝",
                 Arrays.asList("交易成功", "¥128.00", "申请售后"), "order_list");
+        // 用户实测幽灵账单：美团订单状态页「已支付 ¥14.00 商家已接单」，同一笔订单
+        // 在 18:02、18:10 反复入账。「已支付」已从成功信号里移除，履约词再兜一层。
+        rejects("meituan order status page", "com.tencent.mm", "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+                Arrays.asList("已支付", "¥14.00", "微信支付", "商家已接单", "配送中"), "order_list");
+        rejects("meituan order fulfilling", "com.sankuai.meituan.takeoutnew", "美团",
+                Arrays.asList("交易成功", "¥14.00", "商家已接单", "骑手配送中"), "order_list");
+        rejects("meituan merchant chat", "com.tencent.mm", "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+                Arrays.asList("¥7.00", "交易成功", "可给对方留言复购、咨询"), "order_list");
+        // 电商 App 进白名单后，订单页是最大的误报源，履约词必须拦得住。
+        rejects("taobao order detail", "com.taobao.taobao", "淘宝",
+                Arrays.asList("交易成功", "¥129.00", "等待发货", "确认收货", "查看物流"), "order_list");
+        rejects("jd order detail", "com.jingdong.app.mall", "京东",
+                Arrays.asList("交易成功", "¥45.80", "已发货", "查看物流", "申请退款"), "order_list");
+
+        // --- 应当采集：美团 App 内的支付结果页（sankuai 包名可信） ---
+        accepts("meituan app payment success", "com.sankuai.meituan", "美团",
+                Arrays.asList("支付成功", "¥14.00", "红妞包子-软景店"),
+                1400L, "红妞包子-软景店", "expense");
+        accepts("meituan takeout app payment", "com.sankuai.meituan.takeoutnew", "美团外卖",
+                Arrays.asList("付款成功", "付款金额", "¥28.50", "老王面馆", "余额"),
+                2850L, "老王面馆", "expense");
+
+        // --- 应当采集：电商 App 内的支付结果页（SDK 收银台跑在自家进程里） ---
+        accepts("taobao payment success", "com.taobao.taobao", "淘宝",
+                Arrays.asList("付款成功", "¥129.00", "支付宝", "花呗"),
+                12900L, "未知商户", "expense");
+        accepts("jd payment success", "com.jingdong.app.mall", "京东",
+                Arrays.asList("支付成功", "¥45.80", "微信支付"),
+                4580L, "未知商户", "expense");
+        accepts("pinduoduo payment success", "com.xunmeng.pinduoduo", "拼多多",
+                Arrays.asList("支付成功", "¥9.90", "零钱"),
+                990L, "未知商户", "expense");
+        accepts("eleme payment success", "com.alibaba.android.riming", "饿了么",
+                Arrays.asList("支付成功", "¥23.50", "商家", "沙县小吃"),
+                2350L, "沙县小吃", "expense");
+        accepts("douyin payment success", "com.ss.android.ugc.aweme", "抖音",
+                Arrays.asList("支付成功", "¥19.90"),
+                1990L, "未知商户", "expense");
+        accepts("bank app psbc success", "com.psbc.mobilephonebanking", "邮储银行",
+                Arrays.asList("交易成功", "人民币 66.00 元"),
+                6600L, "未知商户", "expense");
+
+        // --- 商户名兜底扫描不收界面垃圾词（用户账本上出现过「星标」这种店） ---
+        accepts("junk node not merchant", "com.tencent.mm", "微信支付",
+                Arrays.asList("支付成功", "¥14.00", "星标", "零钱"),
+                1400L, "未知商户", "expense");
 
         // --- 应当拒绝：成功但无金额 ---
         rejects("success without amount", "com.tencent.mm", "微信支付",
@@ -144,15 +190,20 @@ public final class PaymentPageMatcherTest {
 
         assertTrue(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_030_000L, 120_000L, "accessibility"),
                 "same payment seen by the other channel should be detected within window");
-        assertFalse(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_400_000L, 120_000L, "accessibility"),
-                "payment outside the window is not a duplicate");
+        // 行为变更（用户实测）：同一笔支付的结果页停留期间反复触发，2~7 分钟后
+        // 又被记一笔。同商户同金额 10 分钟内一律判重，不再依赖通道/时间窗。
+        assertTrue(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_400_000L, 120_000L, "accessibility"),
+                "same merchant + same amount within 10 minutes is the same payment re-captured");
+        assertFalse(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_700_000L, 120_000L, "accessibility"),
+                "same merchant beyond 10 minutes can be a real second purchase");
         assertFalse(ledger.hasSimilar(5000L, "expense", "美团外卖", 1_030_000L, 120_000L, "accessibility"),
                 "different amount is not a duplicate");
         assertFalse(ledger.hasSimilar(4680L, "income", "美团外卖", 1_030_000L, 120_000L, "accessibility"),
                 "different direction is not a duplicate");
-        // 同通道的相同金额不算跨通道重复，否则连续两笔相同金额的支付会丢第二笔。
-        assertFalse(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_030_000L, 120_000L, "notification"),
-                "same channel should not be treated as cross-channel duplicate");
+        // 同通道同商户同金额 10 分钟内同样判重：无障碍通道的支付页反复触发
+        // 正是用户实测 17:46/47/48 三笔 ¥14 的来源，不能因为「同通道」就放行。
+        assertTrue(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_060_000L, 120_000L, "notification"),
+                "same-channel same-merchant re-capture must be deduped too");
 
         LocalLedger unknownMerchant = new LocalLedger(20);
         LedgerEntry vague = TransactionParser.parse(

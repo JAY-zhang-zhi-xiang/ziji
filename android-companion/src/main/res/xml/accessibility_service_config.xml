@@ -3,8 +3,13 @@
   自记无障碍服务配置。
 
   设计约束（刻意收紧权限范围）：
-  - 只监听下列支付/银行类 App 的窗口事件，系统设置里也会按 packageNames 过滤，
-    不会接收到其它应用的页面内容。
+  - 只监听下列支付/银行/电商/餐饮平台类 App 的窗口事件，系统设置里也会按
+    packageNames 过滤，不会接收到其它应用的页面内容。覆盖逻辑：
+    · 支付渠道：微信、支付宝、云闪付
+    · 银行：工行/建行/农行/中行/交行/招行/浦发/中信/广发/平安/邮储/兴业
+    · 电商/外卖：淘宝、天猫、京东、京东金融、拼多多、饿了么、抖音、美团系
+      （这些 App 内支付时，微信/支付宝 SDK 收银台跑在它们自己的进程里，
+      不加白名单就收不到成功页事件）
   - canRetrieveWindowContent=true 用于读取支付成功页上的金额与商户文本；
     includeNotImportantViews 帮助兼容部分 ROM 不暴露重要视图的情况。
   - 不请求 canRequestFilterKeyEvents / canRequestTouchExplorationMode，
@@ -17,5 +22,5 @@
     android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="200"
-    android:packageNames="com.tencent.mm,com.eg.android.alipaygphone,com.unionpay,com.icbc,com.ccb,com.abchina,com.chinamworld.main,com.bankcomm,cmb.pb,com.cmbchina.ccd"
+    android:packageNames="com.tencent.mm,com.eg.android.alipaygphone,com.unionpay,com.taobao.taobao,com.tmall.wireless,com.jingdong.app.mall,com.jd.jrapp,com.xunmeng.pinduoduo,com.alibaba.android.riming,com.ss.android.ugc.aweme,com.sankuai.meituan,com.sankuai.meituan.takeoutnew,com.sankuai.maicai,com.icbc,com.ccb,com.abchina,com.chinamworld.main,com.chinamworld.bocmbci,com.bankcomm,cmb.pb,com.cmbchina.ccd,com.spdb.mobilebank.per,com.ecitic.bank.mobile,com.cgbchina.xpt,com.pingan.paces.ccms,com.psbc.mobilephonebanking,com.cib.cibmobile"
     android:summary="@string/accessibility_service_summary" />

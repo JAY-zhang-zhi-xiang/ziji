@@ -19,6 +19,18 @@ public final class LocalLedger {
      */
     private static final long STRICT_CROSS_CHANNEL_WINDOW_MILLIS = 30 * 1000L;
 
+    /**
+     * 「同商户 + 同金额」判重的窗口。
+     *
+     * 支付结果页会在屏幕上停留几分钟，期间任何内容变化都会让无障碍通道重新判定；
+     * 页面签名去重只有 90 秒，且页面文本每次略有差异会让指纹去重也失效——
+     * 用户实测同一笔 ¥14 在 3 分钟内被记了 3 笔（17:46/17:47/17:48）。
+     * 同一家店、同一金额、10 分钟内，几乎不可能是两笔独立消费；真要连买两单
+     * 同价商品的概率，远低于页面重复触发的概率，这里选择判重（宁可少记可疑重复，
+     * 也不能让同一笔支付刷屏——这是用户实际踩到的坑，取舍明确）。
+     */
+    private static final long SAME_PAYMENT_MERCHANT_WINDOW_MILLIS = 10 * 60 * 1000L;
+
     private final int maxEntries;
     private final List<LedgerEntry> entries = new ArrayList<>();
 
@@ -149,18 +161,27 @@ public final class LocalLedger {
         for (LedgerEntry existing : entries) {
             if (existing.amountCents != amountCents) continue;
             if (!wantedDirection.isEmpty() && !wantedDirection.equals(existing.direction)) continue;
-            // 同通道且同来源 App 的记录不算跨来源重复：连续两笔同金额的支付要各自入账。
+            boolean existingMerchantKnown = !existing.merchant.isEmpty()
+                    && !"未知商户".equals(existing.merchant);
+            if (merchantKnown && existingMerchantKnown) {
+                // 双方商户都明确：对不上一定是两笔不同的消费；对得上则 10 分钟内
+                // 视为同一笔（见 SAME_PAYMENT_MERCHANT_WINDOW_MILLIS 的注释——
+                // 支付页停留期间反复触发，是用户实测最多的重复记账来源）。
+                // 注意这条规则不区分通道：通知先记、页面后到（或反过来）都会被拦。
+                if (wantedMerchant.equals(existing.merchant)
+                        && Math.abs(existing.occurredAtMillis - occurredAtMillis)
+                                <= SAME_PAYMENT_MERCHANT_WINDOW_MILLIS) {
+                    return true;
+                }
+                continue;
+            }
+            // 商户有一方不明：退回强证据时间窗判定。
+            // 同通道且同来源 App 的记录不算重复：连续两笔同金额的支付要各自入账。
             // 来源 App 不同（微信通知 vs 银行通知）时不再跳过，继续走强证据时间窗判定。
             if (!wantedSource.isEmpty() && wantedSource.equals(existing.sourceType)
                     && (wantedPackage.isEmpty()
                         ? true
                         : wantedPackage.equals(existing.sourcePackage == null ? "" : existing.sourcePackage.toLowerCase()))) {
-                continue;
-            }
-            // 双方商户都明确却对不上，直接排除，不必再看时间。
-            boolean existingMerchantKnown = !existing.merchant.isEmpty()
-                    && !"未知商户".equals(existing.merchant);
-            if (merchantKnown && existingMerchantKnown && !wantedMerchant.equals(existing.merchant)) {
                 continue;
             }
             if (Math.abs(existing.occurredAtMillis - occurredAtMillis) <= strictWindow) return true;
