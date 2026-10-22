@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -44,12 +45,15 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public final class SettingsActivity extends Activity {
+    private static final String KEY_REVIEWED_DUPLICATE_PAIRS = "reviewed_duplicate_pairs";
     // 配色参考 fanqie 的暖灰 + 赤陶体系：底色略暖，卡片近白，
     // 品牌色用赤陶（而非常见的蓝/绿），整体呈现安静的纸质感。
     private static final int COLOR_HEADER = Color.rgb(236, 232, 224);
@@ -106,6 +110,7 @@ public final class SettingsActivity extends Activity {
     private LinearLayout recentContainer;
     /** 「还有 N 笔没写清用途」提示条的挂载点。 */
     private LinearLayout pendingPurposesContainer;
+    private LinearLayout pendingCapturesContainer;
     private LinearLayout contentContainer;
     private final List<View> navItems = new ArrayList<>();
     private EditText searchInput;
@@ -495,6 +500,9 @@ public final class SettingsActivity extends Activity {
             pendingPurposesContainer = new LinearLayout(this);
             pendingPurposesContainer.setOrientation(LinearLayout.VERTICAL);
             contentContainer.addView(pendingPurposesContainer, fullWidth());
+            pendingCapturesContainer = new LinearLayout(this);
+            pendingCapturesContainer.setOrientation(LinearLayout.VERTICAL);
+            contentContainer.addView(pendingCapturesContainer, fullWidth());
             contentContainer.addView(sectionHeader("账单明细", "点击账单可修改分类与用途"), fullWidthWithBottom(dp(10)));
             recentContainer = new LinearLayout(this);
             recentContainer.setOrientation(LinearLayout.VERTICAL);
@@ -807,6 +815,9 @@ public final class SettingsActivity extends Activity {
         profile.addView(sectionHeader("我的", "本地账本与应用信息"), fullWidthWithBottom(dp(12)));
         LinearLayout card = verticalCard(COLOR_SURFACE, COLOR_BORDER);
         card.addView(label("账单数据保存在这台手机\n自动记账只需要通知读取权限，手动记账不依赖网络。"), fullWidth());
+        Button reviewDuplicates = secondaryButton("查找历史疑似重复", "ic_check");
+        reviewDuplicates.setOnClickListener((view) -> findHistoricalDuplicates());
+        card.addView(reviewDuplicates, fullWidthWithTop(dp(16)));
         Button diagnostics = secondaryButton("查看自动记账处理记录", "ic_history");
         diagnostics.setOnClickListener((view) -> showCaptureHistory());
         card.addView(diagnostics, fullWidthWithTop(dp(16)));
@@ -827,12 +838,92 @@ public final class SettingsActivity extends Activity {
         Button importCsv = secondaryButton("导入 CSV", "ic_upload");
         importCsv.setOnClickListener((view) -> openCsvImport());
         card.addView(importCsv, fullWidthWithTop(dp(8)));
+        // 版本号放这里：升级完能一眼确认装的是哪一版，
+        // 不用去系统设置里翻「应用信息」。
+        String version = appVersion();
+        if (!version.isEmpty()) {
+            card.addView(label("自记 · 版本 " + version), fullWidthWithTop(dp(16)));
+        }
         profile.addView(card, fullWidth());
         return profile;
     }
 
-    private void createBackup() {
-        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+    private String appVersion() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception error) {
+            return "";
+        }
+    }
+
+    private void findHistoricalDuplicates() {
+        Set<String> reviewed = reviewedDuplicatePairs();
+        List<LedgerRepository.DuplicatePair> pending = LedgerAppStorage.repository(this)
+                .findHistoricalDuplicateCandidates(reviewed);
+        if (pending.isEmpty()) {
+            Toast.makeText(this, "没有新的历史疑似重复；账本未被自动修改。", Toast.LENGTH_LONG).show();
+            return;
+        }
+        reviewHistoricalDuplicateAt(pending, 0, 0, 0, reviewed);
+    }
+
+    private void reviewHistoricalDuplicateAt(
+            List<LedgerRepository.DuplicatePair> pairs,
+            int index,
+            int merged,
+            int kept,
+            Set<String> reviewed
+    ) {
+        if (index >= pairs.size()) {
+            updateAllViews();
+            String nextBatch = pairs.size() >= 100 ? "如仍有候选，可再次查找下一批。" : "";
+            Toast.makeText(this, "本轮复核完成：合并 " + merged + " 组，保留两笔 " + kept + " 组。" + nextBatch,
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        LedgerRepository.DuplicatePair pair = pairs.get(index);
+        String message = "账本已有：" + pair.existing.merchant + " · ¥" + formatYuan(pair.existing.amountCents)
+                + " · " + formatDate(pair.existing.occurredAtMillis)
+                + "\n\n另一条记录：" + pair.candidate.merchant + " · ¥" + formatYuan(pair.candidate.amountCents)
+                + " · " + formatDate(pair.candidate.occurredAtMillis)
+                + "\n\n这里只会在你确认后合并；不确定时请选择保留两笔。";
+        new AlertDialog.Builder(this)
+                .setTitle("历史疑似重复 · " + (index + 1) + "/" + pairs.size())
+                .setMessage(message)
+                .setPositiveButton("确认同一笔并合并", (dialog, which) -> {
+                    boolean didMerge = LedgerAppStorage.repository(this).mergeConfirmedDuplicate(
+                            pair.existing.id, pair.candidate.id);
+                    if (didMerge) {
+                        reviewHistoricalDuplicateAt(pairs, index + 1, merged + 1, kept, reviewed);
+                    } else {
+                        Toast.makeText(this, "账单已变化或保存失败；本组未修改。", Toast.LENGTH_LONG).show();
+                        reviewHistoricalDuplicateAt(pairs, index + 1, merged, kept, reviewed);
+                    }
+                })
+                .setNeutralButton("保留两笔", (dialog, which) -> {
+                    reviewed.add(pair.reviewKey());
+                    saveReviewedDuplicatePairs(reviewed);
+                    reviewHistoricalDuplicateAt(pairs, index + 1, merged, kept + 1, reviewed);
+                })
+                .setNegativeButton("稍后处理", (dialog, which) -> {
+                    updateAllViews();
+                    Toast.makeText(this, "已暂停复核；未处理的账单保持原样。", Toast.LENGTH_LONG).show();
+                })
+                .show();
+    }
+
+    private Set<String> reviewedDuplicatePairs() {
+        SharedPreferences preferences = getSharedPreferences(BridgeSettings.PREFS, MODE_PRIVATE);
+        return new HashSet<>(preferences.getStringSet(KEY_REVIEWED_DUPLICATE_PAIRS, Collections.emptySet()));
+    }
+
+    private void saveReviewedDuplicatePairs(Set<String> reviewed) {
+        getSharedPreferences(BridgeSettings.PREFS, MODE_PRIVATE).edit()
+                .putStringSet(KEY_REVIEWED_DUPLICATE_PAIRS, new HashSet<>(reviewed))
+                .apply();
+    }
+
+    private void createBackup() {        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.setType("application/octet-stream");
         intent.putExtra(Intent.EXTRA_TITLE, "自记备份-" + new SimpleDateFormat("yyyyMMdd-HHmm", Locale.CHINA).format(System.currentTimeMillis()) + ".ziji");
         startActivityForResult(intent, REQUEST_CREATE_BACKUP);
@@ -1213,7 +1304,8 @@ public final class SettingsActivity extends Activity {
                     occurredAt[0], "手动记账 · " + merchantLabel, "manual", "manual",
                     LedgerCodec.fingerprint(id), now, now, 0L, true, purpose
             );
-            if (!LocalLedgerStore.add(this, entry)) {
+            LedgerRepository.AddResult saved = LocalLedgerStore.addExplicit(this, entry);
+            if (saved != LedgerRepository.AddResult.ADDED) {
                 Toast.makeText(this, "保存失败，请重试。", Toast.LENGTH_SHORT).show();
                 return;
             }
@@ -1374,6 +1466,7 @@ public final class SettingsActivity extends Activity {
         }
         // 待补提示走全量：补用途是待办，不分月份。
         renderPendingPurposes(monthEntries);
+        renderPendingCaptureReviews();
         List<LedgerEntry> entries = new ArrayList<>();
         String query = searchInput == null ? "" : searchInput.getText().toString().trim().toLowerCase(Locale.ROOT);
         for (LedgerEntry entry : monthEntries) {
@@ -1489,6 +1582,49 @@ public final class SettingsActivity extends Activity {
             return;
         }
         showEditDialog(pending.get(0), true);
+    }
+
+    private void renderPendingCaptureReviews() {
+        if (pendingCapturesContainer == null) return;
+        pendingCapturesContainer.removeAllViews();
+        List<CaptureEvent> events = CaptureHistoryStore.load(this).entries();
+        int pending = 0;
+        for (CaptureEvent event : events) {
+            if (CaptureHistory.isPendingDuplicate(event, events)) pending += 1;
+        }
+        if (pending == 0) return;
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(16), dp(14), dp(14), dp(14));
+        card.setBackground(rounded(COLOR_EXPENSE_SOFT, Color.TRANSPARENT, RADIUS_CARD));
+        card.setClickable(true);
+        card.setFocusable(true);
+        card.setContentDescription(pending + " 笔疑似重复账单待确认");
+        card.addView(iconView("ic_alert", COLOR_EXPENSE, 20),
+                new LinearLayout.LayoutParams(dp(20), dp(20)));
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setPadding(dp(12), 0, dp(8), 0);
+        TextView title = new TextView(this);
+        title.setText(pending + " 笔账单疑似重复，待确认");
+        title.setTextSize(14);
+        title.setTextColor(COLOR_EXPENSE);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        texts.addView(title, fullWidth());
+        TextView hint = new TextView(this);
+        hint.setText("暂未计入账本，点此逐笔处理");
+        hint.setTextSize(12);
+        hint.setTextColor(COLOR_MUTED);
+        hint.setPadding(0, dp(3), 0, 0);
+        texts.addView(hint, fullWidth());
+        card.addView(texts, weighted());
+        card.addView(iconView("ic_chevron", COLOR_EXPENSE, 18),
+                new LinearLayout.LayoutParams(dp(18), dp(18)));
+        card.setOnClickListener((view) -> showCaptureHistory());
+        pendingCapturesContainer.addView(card, cardParams(dp(12)));
     }
 
     private View buildEntryCard(LedgerEntry entry) {
@@ -1867,29 +2003,120 @@ public final class SettingsActivity extends Activity {
             Toast.makeText(this, "暂无支付通知处理记录。", Toast.LENGTH_SHORT).show();
             return;
         }
-
-        StringBuilder message = new StringBuilder();
-        int count = Math.min(events.size(), 15);
-        for (int index = 0; index < count; index += 1) {
-            CaptureEvent event = events.get(index);
-            if (index > 0) message.append("\n\n");
-            message.append(formatDate(event.timestampMillis))
-                    .append("  ").append(sourceName(event.packageName))
-                    .append("\n").append(captureStatusText(event));
-            String text = event.text.length() > 80 ? event.text.substring(0, 80) + "…" : event.text;
-            if (!text.isEmpty()) message.append("\n").append(text);
+        List<CaptureEvent> visible = new ArrayList<>();
+        for (CaptureEvent event : events) {
+            if (CaptureHistory.isPendingDuplicate(event, events)) visible.add(event);
         }
-
+        for (CaptureEvent event : events) {
+            if (CaptureHistory.isPendingDuplicate(event, events)) continue;
+            if (visible.size() >= 15) break;
+            visible.add(event);
+        }
+        if (visible.isEmpty()) {
+            Toast.makeText(this, "暂无待复核的自动记账记录。", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] labels = new String[visible.size()];
+        for (int index = 0; index < visible.size(); index += 1) {
+            CaptureEvent event = visible.get(index);
+            String summary = event.text.length() > 46 ? event.text.substring(0, 46) + "…" : event.text;
+            labels[index] = formatDate(event.timestampMillis) + " · " + captureStatusText(event)
+                    + (summary.isEmpty() ? "" : "\n" + summary);
+        }
         new AlertDialog.Builder(this)
                 .setTitle("最近自动记账处理")
-                .setMessage(message.toString())
+                .setItems(labels, (dialog, which) -> {
+                    CaptureEvent event = visible.get(which);
+                    if ("possible_duplicate".equals(event.status)) reviewPossibleCapture(event);
+                    else showCaptureEventDetails(event);
+                })
+                .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    private void showCaptureEventDetails(CaptureEvent event) {
+        new AlertDialog.Builder(this)
+                .setTitle(sourceName(event.packageName) + " · " + captureStatusText(event))
+                .setMessage(formatDate(event.timestampMillis) + (event.text.isEmpty() ? "" : "\n\n" + event.text))
                 .setPositiveButton("关闭", null)
                 .show();
+    }
+
+    private void reviewPossibleCapture(CaptureEvent event) {
+        LedgerEntry candidate = TransactionParser.parse(
+                event.packageName, event.text, event.timestampMillis, LedgerRuleStore.load(this));
+        if (candidate.amountCents <= 0L) {
+            Toast.makeText(this, "无法从这条记录恢复金额，请手动补记。", Toast.LENGTH_LONG).show();
+            return;
+        }
+        String existingId = "";
+        if (event.reason.startsWith("possible_duplicate:")) {
+            String reference = event.reason.substring("possible_duplicate:".length());
+            int separator = reference.indexOf(':');
+            existingId = separator < 0 ? reference : reference.substring(0, separator);
+        }
+        LedgerEntry existing = null;
+        for (LedgerEntry entry : LocalLedgerStore.entriesBetween(this, 0L, Long.MAX_VALUE)) {
+            if (entry.id.equals(existingId)) {
+                existing = entry;
+                break;
+            }
+        }
+        String message = "待复核：" + candidate.merchant + " · ¥" + formatYuan(candidate.amountCents)
+                + " · " + formatDate(candidate.occurredAtMillis);
+        if (existing != null) {
+            message += "\n\n账本已有：" + existing.merchant + " · ¥" + formatYuan(existing.amountCents)
+                    + " · " + formatDate(existing.occurredAtMillis);
+        }
+        LedgerEntry existingEntry = existing;
+        new AlertDialog.Builder(this)
+                .setTitle("这笔可能重复")
+                .setMessage(message + "\n\n这条候选尚未计入支出。请选择如何处理。")
+                .setPositiveButton("确认重复并合并信息", (dialog, which) -> {
+                    LedgerRepository.AddResult result = existingEntry == null
+                            ? LedgerRepository.AddResult.FAILED
+                            : LocalLedgerStore.mergeCaptureIntoExisting(this, existingEntry.id, candidate);
+                    if (result == LedgerRepository.AddResult.MERGED || result == LedgerRepository.AddResult.DUPLICATE) {
+                        resolvePossibleCapture(event, "candidate_merged");
+                        updateAllViews();
+                        Toast.makeText(this, "已确认是同一笔，候选信息已处理。", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(this, "原账单已不存在或保存失败；候选仍保留待复核。", Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNeutralButton("保留两笔", (dialog, which) -> {
+                    LedgerRepository.AddResult result = LocalLedgerStore.addExplicitWithPending(
+                            this, candidate, event.text);
+                    if (result == LedgerRepository.AddResult.ADDED || result == LedgerRepository.AddResult.DUPLICATE) {
+                        resolvePossibleCapture(event, "candidate_kept");
+                        updateAllViews();
+                        Toast.makeText(this,
+                                result == LedgerRepository.AddResult.ADDED
+                                        ? "候选已作为另一笔账单入账。"
+                                        : "这条候选此前已入账，复核状态已更新。",
+                                Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(this, "保存失败；候选仍保留待复核。", Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("稍后处理", null)
+                .show();
+    }
+
+    private void resolvePossibleCapture(CaptureEvent event, String outcome) {
+        CaptureHistoryStore.add(this, new CaptureEvent(
+                System.currentTimeMillis(), "resolved", CaptureHistory.resolutionReason(event, outcome),
+                event.packageName, event.text));
     }
 
     private static String captureStatusText(CaptureEvent event) {
         if ("captured".equals(event.status)) return "已自动入账";
         if ("failed".equals(event.status)) return "保存失败，请检查手机存储空间";
+        if ("possible_duplicate".equals(event.status)) return "疑似重复 · 待你确认";
+        if ("resolved".equals(event.status)) {
+            if (event.reason.endsWith(":candidate_kept")) return "复核完成 · 保留为两笔";
+            if (event.reason.endsWith(":candidate_merged")) return "复核完成 · 确认重复";
+        }
         if ("duplicate".equals(event.status)) {
             return "cross_channel_duplicate".equals(event.reason) ? "另一通道已记过，已忽略" : "重复支付，已忽略";
         }

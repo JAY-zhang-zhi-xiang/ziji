@@ -1,13 +1,15 @@
-const CACHE_NAME = "ziji-ledger-cache-v35";
+const CACHE_NAME = "ziji-ledger-cache-v41";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css?v=17",
-  "./app.js?v=32",
+  "./app.js?v=37",
+  "./dedupe.js?v=4",
   "./parser.js?v=15",
   "./refund.js?v=2",
   "./csv.js?v=1",
   "./manifest.webmanifest",
+  "./assets/icons.svg",
   "./assets/icon.svg"
 ];
 

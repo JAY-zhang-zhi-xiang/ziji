@@ -136,14 +136,19 @@ async function handleApi(request, response, url, context) {
       const stored = [];
       let duplicates = 0;
 
-      for (const row of rows) {
-        if (hasPendingDuplicate(captures, row)) {
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        const captureId = payload.captureId
+          ? `${String(payload.captureId)}${rows.length > 1 ? `:${index}` : ""}`
+          : "";
+        if (hasPendingDuplicate(captures, row, payload.source || "bridge", captureId)) {
           duplicates += 1;
           continue;
         }
 
         const capture = {
           id: createId(),
+          clientId: captureId,
           text: row,
           source: payload.source || "bridge",
           parsed: parseTransaction(row),
@@ -368,9 +373,17 @@ function constantTimeEqual(a, b) {
   return timingSafeEqual(left, right);
 }
 
-function hasPendingDuplicate(captures, text) {
+function hasPendingDuplicate(captures, text, source = "bridge", clientId = "") {
   const signature = normalizeCaptureText(text);
-  return captures.some((capture) => !capture.claimed && normalizeCaptureText(capture.text || capture.sourceText || "") === signature);
+  const now = Date.now();
+  return captures.some((capture) => {
+    if (clientId) return capture.clientId === clientId && capture.source === source;
+    if (capture.claimed) return false;
+    // Legacy clients have no event ID. Only collapse immediate retransmits;
+    // identical transactions later in the day must remain separate captures.
+    return normalizeCaptureText(capture.text || capture.sourceText || "") === signature
+      && now - new Date(capture.createdAt).getTime() <= 2 * 60 * 1000;
+  });
 }
 
 function normalizeCaptureText(text) {

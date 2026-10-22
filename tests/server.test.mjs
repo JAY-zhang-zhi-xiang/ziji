@@ -72,6 +72,37 @@ try {
   assert.equal(duplicate.body.duplicates, 1);
   assert.equal(duplicate.body.captures.length, 0);
 
+  const repeatedOne = await request("/api/capture", {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      source: "android-notification",
+      captureId: "device-event-1",
+      text: "支付宝 06月06日 12:31 向 星巴克 付款 32.00元 付款方式 花呗"
+    })
+  });
+  const repeatedTwo = await request("/api/capture", {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      source: "android-notification",
+      captureId: "device-event-2",
+      text: "支付宝 06月06日 12:31 向 星巴克 付款 32.00元 付款方式 花呗"
+    })
+  });
+  assert.equal(repeatedOne.body.added, 1, "a distinct event ID must be accepted");
+  assert.equal(repeatedTwo.body.added, 1, "same text from a later event must be accepted");
+  const retried = await request("/api/capture", {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      source: "android-notification",
+      captureId: "device-event-1",
+      text: "支付宝 06月06日 12:31 向 星巴克 付款 32.00元 付款方式 花呗"
+    })
+  });
+  assert.equal(retried.body.added, 0, "retrying the same event ID must be idempotent");
+
   const concurrent = await Promise.all([
     request("/api/capture", {
       method: "POST",
@@ -90,11 +121,11 @@ try {
   assert.equal(backupFiles.length, 1);
 
   const restoredFile = JSON.parse(await readFile(dataFile, "utf8"));
-  assert.equal(restoredFile.length, 3);
+  assert.equal(restoredFile.length, 5);
 
   const captures = await request("/api/captures", { headers: authHeaders() });
   assert.equal(captures.status, 200);
-  assert.equal(captures.body.captures.length, 3);
+  assert.equal(captures.body.captures.length, 5);
 
   for (const capture of captures.body.captures) {
     const claimed = await request(`/api/captures/${capture.id}/claim`, { method: "POST", headers: authHeaders() });

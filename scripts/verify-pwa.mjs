@@ -167,6 +167,10 @@ const LEGACY_PWA_CSV = [
 ].join("\n");
 
 const NO_DIRECTION_CSV = "时间,金额,商户\n2026-10-17 10:00:00,10.00,测试";
+const POSSIBLE_DUPLICATE_CSV = [
+  "时间,收支,金额,商户,账户,分类,用途,原始通知",
+  "2026-10-15 12:31:05,支出,32.00,未知商户,零钱,餐饮,,待复核测试"
+].join("\n");
 
 const chromePath = findChrome();
 if (!chromePath) {
@@ -181,6 +185,7 @@ const chrome = spawn(chromePath, [
   `--user-data-dir=${profileDir}`,
   "--no-first-run",
   "--no-default-browser-check",
+  "--remote-allow-origins=*",
   "about:blank"
 ], { stdio: "ignore" });
 
@@ -272,10 +277,30 @@ try {
   const afterRepeat = await cdp.evaluate("document.querySelectorAll('#ledgerList > *').length");
   check("同一份文件重复导入不重复入账", afterRepeat === afterLegacy.rows, `rows=${afterRepeat}`);
 
+  await cdp.upload(POSSIBLE_DUPLICATE_CSV, "possible-duplicate.csv");
+  await sleep(1200);
+  const duplicateReview = await cdp.evaluate(`(() => {
+    const panel = document.getElementById("duplicateReview");
+    const action = panel?.querySelector('[data-action="keep-candidate"]');
+    return { visible: Boolean(panel && !panel.hidden), action: Boolean(action), text: panel?.textContent || "" };
+  })()`);
+  check("疑似重复候选在收件箱可见", duplicateReview.visible && duplicateReview.text.includes("待确认"), duplicateReview.text.slice(0, 60));
+  check("疑似重复候选提供保留操作", duplicateReview.action === true);
+  await cdp.click('#duplicateReview [data-action="keep-candidate"]');
+  await sleep(500);
+  const afterReview = await cdp.evaluate(`({
+    candidates: document.querySelectorAll('#duplicateReview [data-action="keep-candidate"]').length,
+    kept: document.getElementById('ledgerList')?.textContent.includes('未知商户')
+  })`);
+  check("点击保留后候选入账并从待确认区消失", afterReview.candidates === 0 && afterReview.kept === true, JSON.stringify(afterReview));
+
+  // 基线要取「上一步复核之后」的条数：保留候选会真的入账一条，
+  // 拿复核之前的 rows 当基线，这条检查会永远失败。
+  const beforeBad = await cdp.evaluate("document.querySelectorAll('#ledgerList > *').length");
   await cdp.upload(NO_DIRECTION_CSV, "no-direction.csv");
   await sleep(1200);
   const afterBad = await cdp.evaluate("document.querySelectorAll('#ledgerList > *').length");
-  check("缺「收支」列整份拒绝，账本不变", afterBad === afterRepeat, `rows=${afterBad}`);
+  check("缺「收支」列整份拒绝，账本不变", afterBad === beforeBad, `rows=${afterBad}/${beforeBad}`);
 
   await cdp.click('.tab-button[data-tab="ledger"]');
   await sleep(600);

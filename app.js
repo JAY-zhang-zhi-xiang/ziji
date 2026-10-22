@@ -1,6 +1,17 @@
 import { CATEGORIES, parseTransaction as parseBillTransaction, splitImportText } from "./parser.js?v=15";
 import { computeRefundOffset } from "./refund.js?v=2";
 import { CSV_HEADER, formatCsvTime, parseLedgerCsv } from "./csv.js?v=1";
+import {
+  bothExplicitSources,
+  isExplicitSource,
+  isPossibleDuplicatePair,
+  isReliableMerchant,
+  isSamePayment,
+  mergeDuplicate,
+  partitionPossibleDuplicates,
+  POSSIBLE_DUPLICATE_WINDOW_MILLIS,
+  sameMerchant
+} from "./dedupe.js?v=4";
 
 const STORAGE_KEY = "ziji-ledger-v1";
 const BRIDGE_TOKEN_KEY = "ziji-bridge-token-v1";
@@ -10,30 +21,46 @@ const STORAGE_DB = "ziji-ledger-storage";
 const CATEGORY_SCHEMA_VERSION = 2;
 
 const CATEGORY_ICON = {
-  "餐饮": "icon-cat-food",
-  "娱乐": "icon-cat-entertainment",
-  "购物": "icon-cat-shopping",
-  "穿搭": "icon-cat-shopping",
-  "零食": "icon-cat-food",
-  "交通": "icon-cat-transport",
-  "日用": "icon-cat-home",
-  "人情": "icon-cat-social",
-  "宠物": "icon-cat-social",
-  "美容": "icon-cat-shopping",
-  "运动": "icon-cat-entertainment",
-  "医疗": "icon-cat-medical",
-  "服务": "icon-cat-home",
-  "买菜": "icon-cat-food",
-  "居家": "icon-cat-home",
-  "爱车": "icon-cat-transport",
-  "红包": "icon-cat-social",
+  "餐饮": "icon-cat-exp-utensils-crossed",
+  "娱乐": "icon-cat-exp-gamepad-2",
+  "购物": "icon-cat-exp-shopping-bag",
+  "穿搭": "icon-cat-exp-shirt",
+  "零食": "icon-cat-exp-cookie",
+  "交通": "icon-cat-exp-bus-front",
+  "日用": "icon-cat-exp-spray-can",
+  "人情": "icon-cat-exp-gift",
+  "宠物": "icon-cat-exp-paw-print",
+  "美容": "icon-cat-exp-sparkles",
+  "运动": "icon-cat-exp-dumbbell",
+  "医疗": "icon-cat-inc-shield-check",
+  "服务": "icon-cat-exp-droplets",
+  "买菜": "icon-cat-exp-carrot",
+  "居家": "icon-cat-exp-house",
+  "住房": "icon-cat-exp-house",
+  "爱车": "icon-cat-exp-car",
+  "红包": "icon-cat-exp-hand-coins",
   "转账": "icon-transfer",
-  "学习": "icon-cat-study",
-  "虚拟": "icon-cat-entertainment",
-  "烟酒": "icon-cat-food",
-  "收入": "icon-cat-income",
-  "退款": "icon-cat-refund",
-  "其他": "icon-cat-other"
+  "学习": "icon-cat-exp-graduation-cap",
+  "教育": "icon-cat-exp-graduation-cap",
+  "虚拟": "icon-cat-exp-dices",
+  "烟酒": "icon-cat-exp-wine",
+  "工资": "icon-cat-inc-briefcase-business",
+  "兼职": "icon-cat-inc-bike",
+  "投资理财": "icon-cat-inc-chart-line",
+  "人情社交": "icon-cat-inc-heart-handshake",
+  "奖金补贴": "icon-cat-inc-trophy",
+  "报销": "icon-cat-inc-receipt-text",
+  "生意": "icon-cat-inc-store",
+  "卖二手": "icon-cat-inc-tag",
+  "生活费": "icon-cat-inc-hand-coins",
+  "中奖": "icon-cat-inc-ticket",
+  "收红包": "icon-cat-inc-gift",
+  "收转账": "icon-cat-inc-arrow-down-left",
+  "保险理赔": "icon-cat-inc-shield-check",
+  "退款": "icon-cat-inc-rotate-ccw",
+  "收入": "icon-wallet",
+  "管理": "icon-cat-inc-settings",
+  "其他": "icon-cat-inc-circle-ellipsis"
 };
 
 let state = migrate({});
@@ -52,6 +79,10 @@ let editingTransferId = null;
 let lastFocusedElement = null;
 let reportMonthOffset = 0;
 let persistChain = Promise.resolve();
+const MAX_DUPLICATE_CANDIDATES = 500;
+const announcedBridgeIssues = new Set();
+const unparsedBridgeCaptureIds = new Set();
+const deferredBridgeCaptureIds = new Set();
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -208,6 +239,7 @@ function migrate(parsed) {
     version: 4,
     entries: [],
     pending: [],
+    duplicateCandidates: [],
     userRules: [],
     accounts: createDefaultAccounts(),
     categories: createDefaultCategories(),
@@ -229,6 +261,7 @@ function migrate(parsed) {
     settings: { ...defaults.settings, ...(parsed.settings || {}) },
     stats: { ...defaults.stats, ...(parsed.stats || {}) }
   };
+  merged.duplicateCandidates = Array.isArray(merged.duplicateCandidates) ? merged.duplicateCandidates : [];
 
   if (Number(parsed.version || 0) < 4 && parsed.settings && parsed.settings.autoConfirm === false) {
     merged.settings.autoConfirm = true;
@@ -582,20 +615,24 @@ async function loadBridgeToken() {
 
 function saveState() {
   // 账本读取失败进入安全模式后，任何写盘都可能用空账本覆盖原数据，必须拦住。
-  if (storageReadFailed) return;
+  if (storageReadFailed) return Promise.resolve(false);
   persistChain = persistChain.then(() => persistState()).catch((error) => {
     console.error("Unable to queue ledger state", error);
+    return false;
   });
   render();
+  return persistChain;
 }
 
 async function persistState() {
-  if (storageReadFailed) return;
+  if (storageReadFailed) return false;
   try {
     await writeStorage(STORAGE_KEY, JSON.stringify(state));
+    return true;
   } catch (error) {
     console.error("Unable to save ledger state", error);
     showToast("无法保存本地账本。请先导出备份并检查浏览器存储空间。", "error");
+    return false;
   }
 }
 
@@ -703,6 +740,7 @@ function wireEvents() {
   elements.importCsv.addEventListener("change", (event) => importCsvFile(event.target.files?.[0]));
   $("#exportCsv").addEventListener("click", exportCsv);
   $("#exportJson").addEventListener("click", exportJson);
+  $("#mergeDuplicates").addEventListener("click", mergeDuplicateEntries);
   $("#clearAll").addEventListener("click", clearAllData);
   $("#saveRule").addEventListener("click", saveUserRule);
   $("#saveBudget").addEventListener("click", saveBudget);
@@ -710,6 +748,7 @@ function wireEvents() {
     ledgerQuery = elements.ledgerSearch.value.trim();
     renderLedger();
   });
+  $("#duplicateReview").addEventListener("click", handleDuplicateReviewClick);
 
   elements.addAccount.addEventListener("click", addAccount);
   elements.accountList.addEventListener("click", handleAccountListClick);
@@ -807,12 +846,40 @@ function queueParsedItems(rows, metadata = {}) {
 
   const newItems = [];
   const duplicateItems = [];
+  const possibleItems = [];
+  let deferredReview = 0;
   for (const item of withAccountId) {
     const duplicateOf = findDuplicate(item);
     if (duplicateOf) {
+      // 判为同一笔时不再新增，但要把这条里更全的商户名/分类/用途补进去，
+      // 否则「通知先到、页面后到」的那一半信息会被直接丢掉。
+      mergeIntoDuplicate(duplicateOf, item);
       duplicateItems.push({ ...item, duplicateOf: duplicateOf.id, duplicateHint: true });
     } else {
-      newItems.push(item);
+      const possibleDuplicate = findPossibleDuplicate(item);
+      if (possibleDuplicate) {
+        const alreadyQueued = state.duplicateCandidates.some((candidate) =>
+          candidate.existingId === possibleDuplicate.id
+          && Boolean(item.captureId)
+          && candidate.item?.captureId === item.captureId
+          && normalizeCaptureText(candidate.item?.source) === normalizeCaptureText(item.source)
+        );
+        if (!alreadyQueued) {
+          if (state.duplicateCandidates.length >= MAX_DUPLICATE_CANDIDATES) {
+            deferredReview += 1;
+            continue;
+          }
+          state.duplicateCandidates.unshift({
+            id: crypto.randomUUID(),
+            existingId: possibleDuplicate.id,
+            item,
+            createdAt: new Date().toISOString()
+          });
+          possibleItems.push(item);
+        }
+      } else {
+        newItems.push(item);
+      }
     }
   }
 
@@ -824,15 +891,18 @@ function queueParsedItems(rows, metadata = {}) {
     }))
   );
   state.pending = [];
-  state.stats.parsedCount += newItems.length + duplicateItems.length;
+  state.stats.parsedCount += newItems.length + duplicateItems.length + possibleItems.length;
   state.stats.acceptedCount += newItems.length;
-  saveState();
+  const persisted = saveState();
   return {
-    added: newItems.length + duplicateItems.length,
+    added: newItems.length + duplicateItems.length + possibleItems.length,
     pending: 0,
     confirmed: newItems.length,
     duplicates: duplicateItems.length,
-    withoutAmount: parsedRows.length - withAmount.length
+    possibleDuplicates: possibleItems.length,
+    withoutAmount: parsedRows.length - withAmount.length,
+    deferredReview,
+    persisted
   };
 }
 
@@ -887,17 +957,45 @@ async function syncAutoCaptures({ announce }) {
 
     let totalNew = 0;
     let totalDuplicates = 0;
+    let totalPossible = 0;
+    let newUnparsed = 0;
+    let newDeferred = 0;
     for (const capture of captures) {
+      if (unparsedBridgeCaptureIds.has(capture.id) || deferredBridgeCaptureIds.has(capture.id)) continue;
       const result = queueParsedItems(splitImportText(capture.text || capture.sourceText || ""), {
         captureSource: formatCaptureSource(capture.source),
+        captureChannel: capture.source || "",
+        captureId: capture.id || "",
         capturedAt: capture.createdAt || new Date().toISOString()
       });
-      totalNew += result.added - result.duplicates;
+      if (!(await result.persisted)) {
+        // Only acknowledge a bridge event after the local ledger is durable.
+        continue;
+      }
+      totalNew += result.confirmed;
       totalDuplicates += result.duplicates;
+      totalPossible += result.possibleDuplicates;
+      if (result.withoutAmount > 0) {
+        unparsedBridgeCaptureIds.add(capture.id);
+        if (rememberBridgeIssue(`unparsed:${capture.id}`)) newUnparsed += result.withoutAmount;
+        continue;
+      }
+      if (result.deferredReview > 0) {
+        deferredBridgeCaptureIds.add(capture.id);
+        if (rememberBridgeIssue(`review-full:${capture.id}`)) newDeferred += result.deferredReview;
+        continue;
+      }
       await claimAutoCapture(capture.id);
     }
 
-    if (announce && totalNew > 0) {
+    if (newUnparsed > 0) {
+      showToast(`有 ${newUnparsed} 条桥接内容暂时无法识别金额，已保留在待同步队列，没有丢弃。`, "info");
+    } else if (newDeferred > 0) {
+      showToast("疑似重复复核列表已满，剩余账单仍保留在桥接队列。", "info");
+    } else if (announce && totalPossible > 0) {
+      showToast(`有 ${totalPossible} 笔账单与已有记录相近，已放入“疑似重复”待确认。`, "info");
+      renderAutopilotStatus();
+    } else if (announce && totalNew > 0) {
       showToast(`自动捕获 ${totalNew} 条新账单，已按规则处理。`, "success");
       renderAutopilotStatus();
     } else if (announce && totalDuplicates > 0 && totalNew === 0) {
@@ -907,6 +1005,15 @@ async function syncAutoCaptures({ announce }) {
     autoBridgeConnected = false;
     setSyncState("本地优先 · 桥接未连接");
   }
+}
+
+function rememberBridgeIssue(key) {
+  if (!key || announcedBridgeIssues.has(key)) return false;
+  announcedBridgeIssues.add(key);
+  if (announcedBridgeIssues.size > 500) {
+    announcedBridgeIssues.delete(announcedBridgeIssues.values().next().value);
+  }
+  return true;
 }
 
 async function claimAutoCapture(id) {
@@ -947,12 +1054,88 @@ function formatCaptureSource(source) {
   return "自动捕获";
 }
 
+/**
+ * 「这两条是不是同一笔钱」。
+ *
+ * 旧实现要求「金额 + 商户 + 10 分钟内」，看起来比手机端宽松，实际上更糟：
+ * 同一次支付在两条通道里拿到的商户名经常不一样——页面通道认出「红姐包子-软景店」，
+ * 通知通道只解析出「未知商户」或界面上的「搜索」。商户对不上，这条判断就永远 false，
+ * 账本上于是同金额同时间出现两条。
+ *
+ * 规则收在 dedupe.js，和手机端 PaymentIdentity 是同一套。
+ */
 function findDuplicate(item) {
   return state.entries.find((current) => {
     if (current.id === item.id) return false;
-    const minutes = Math.abs(new Date(current.occurredAt) - new Date(item.occurredAt)) / 60000;
-    return current.amount === item.amount && current.merchant === item.merchant && minutes < 10;
+    if (isExplicitSource(current) || isExplicitSource(item)) return false;
+    return isSamePayment(current, item);
   });
+}
+
+function findPossibleDuplicate(item) {
+  return state.entries.find((current) => {
+    return current.id !== item.id
+      && !isExplicitSource(current)
+      && !isExplicitSource(item)
+      && !isSamePayment(current, item)
+      && isPossibleDuplicatePair(current, item);
+  }) || null;
+}
+
+function normalizeCaptureText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function handleDuplicateReviewClick(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  const candidate = state.duplicateCandidates.find((item) => item.id === button.dataset.id);
+  if (!candidate) return;
+  const existing = state.entries.find((item) => item.id === candidate.existingId);
+  if (button.dataset.action === "merge-candidate" && !existing) {
+    showToast("原账单已不存在，候选仍保留；请选择保留这笔账。", "info");
+    return;
+  }
+
+  if (button.dataset.action === "merge-candidate") {
+    mergeDuplicate(existing, candidate.item);
+    if (candidate.entryId) {
+      state.entries = state.entries.filter((entry) => entry.id !== candidate.entryId);
+    }
+  } else if (button.dataset.action === "keep-candidate") {
+    if (candidate.entryId) {
+      const reviewedEntry = state.entries.find((entry) => entry.id === candidate.entryId);
+      if (reviewedEntry) {
+        reviewedEntry.duplicateReviewed = "keep-both";
+      } else {
+        state.entries.unshift({
+          ...candidate.item,
+          confirmedAt: new Date().toISOString(),
+          autoConfirmed: true,
+          duplicateReviewed: "keep-both"
+        });
+        state.stats.acceptedCount += 1;
+      }
+    } else {
+      state.entries.unshift({
+        ...candidate.item,
+        confirmedAt: new Date().toISOString(),
+        autoConfirmed: true,
+        duplicateReviewed: "keep-both"
+      });
+      state.stats.acceptedCount += 1;
+    }
+  } else {
+    return;
+  }
+
+  state.duplicateCandidates = state.duplicateCandidates.filter((item) => item.id !== candidate.id);
+  deferredBridgeCaptureIds.clear();
+  saveState();
+}
+
+function mergeIntoDuplicate(existing, incoming) {
+  return mergeDuplicate(existing, incoming);
 }
 
 function openEditModal(type, id) {
@@ -1220,17 +1403,36 @@ async function importCsvFile(file) {
           : "这份 CSV 里没有新账单。",
         "info"
       );
-    } else if (confirm(
-      `将导入 ${result.rows.length} 条账单，跳过 ${result.duplicates} 条重复、${result.invalid} 条无法识别，继续吗？`
-    )) {
+    } else {
+      const planned = planCsvImport(result.rows);
+      const nearHint = planned.candidates.length
+        ? `，另有 ${planned.candidates.length} 条与已有记录相近、导入后待确认`
+        : "";
+      const deferredHint = planned.deferred
+        ? `，另有 ${planned.deferred} 条相近记录因复核队列已满暂不导入`
+        : "";
+      if (!confirm(
+        `将导入 ${planned.accepted.length} 条账单，跳过 ${result.duplicates} 条重复、${result.invalid} 条无法识别${nearHint}${deferredHint}，继续吗？`
+      )) {
+        elements.importCsv.value = "";
+        return;
+      }
       // 手机端有 22 个支出分类，网页端默认只有 11 个。缺的直接补上，
       // 否则「零食」这类账在网页上既选不到、也会被分类图表漏掉。
       result.rows.forEach((row) => ensureCategory(row.category));
-      state.entries.unshift(...result.rows.map((row) => toImportedEntry(row)));
+      state.entries.unshift(...planned.accepted);
+      state.duplicateCandidates.push(...planned.candidates);
       state.stats.parsedCount += result.rows.length;
-      state.stats.acceptedCount += result.rows.length;
+      state.stats.acceptedCount += planned.accepted.length;
       saveState();
-      showToast(`已导入 ${result.rows.length} 条账单。`, "success");
+      showToast(
+        planned.deferred
+          ? `已导入 ${planned.accepted.length} 条；${planned.deferred} 条相近记录未导入，请处理待复核记录后重新导入。`
+          : planned.candidates.length
+            ? `已导入 ${planned.accepted.length} 条；另 ${planned.candidates.length} 条与已有记录相近，放在收件箱顶部待确认。`
+            : `已导入 ${planned.accepted.length} 条账单。`,
+        planned.deferred ? "info" : "success"
+      );
     }
   } catch {
     showToast("CSV 读取失败，请确认文件没有损坏。", "error");
@@ -1238,8 +1440,48 @@ async function importCsvFile(file) {
   elements.importCsv.value = "";
 }
 
-/** 网页导出时「来源/备注」列写的是来源标签，不该在导入后变成用户备注。 */
-const CSV_SOURCE_LABELS = new Set([
+/**
+ * 把待导入的行分成「直接入账」和「与已有记录相近、需要确认」两组。
+ *
+ * CSV 是对账单，不是用户逐条敲进去的账：银行流水的时间和商户名与自动捕获
+ * 常常差几秒、差几个字，csv.js 的精确判重拦不住——直接导入就会把同一笔钱
+ * 记两遍。这里沿用「机器不确定就别替人拍板」的口径：相近的放进收件箱等确认，
+ * 既不静默重复，也不静默丢弃。人工手动记账不走这条路，仍然是点了就入账。
+ */
+function planCsvImport(rows) {
+  const eligible = [];
+  for (const row of rows) {
+    const item = toImportedEntry(row);
+    // 同一份文件导入两次时，已在待确认里的行不能再排一次队。
+    const alreadyQueued = state.duplicateCandidates.some((candidate) =>
+      candidate.item
+      && Number(candidate.item.amount) === Number(item.amount)
+      && (candidate.item.direction || "expense") === (item.direction || "expense")
+      && String(candidate.item.occurredAt) === String(item.occurredAt)
+      && String(candidate.item.merchant || "") === String(item.merchant || "")
+    );
+    if (alreadyQueued) continue;
+    eligible.push(item);
+  }
+  // 同一份文件内部两次相近也算；队列满时必须延期，不能改走直接入账。
+  const partition = partitionPossibleDuplicates(
+    eligible,
+    state.entries,
+    MAX_DUPLICATE_CANDIDATES - state.duplicateCandidates.length
+  );
+  return {
+    accepted: partition.accepted,
+    candidates: partition.candidates.map(({ existing, item }) => ({
+      id: crypto.randomUUID(),
+      existingId: existing.id,
+      item,
+      createdAt: new Date().toISOString()
+    })),
+    deferred: partition.deferred
+  };
+}
+
+/** 网页导出时「来源/备注」列写的是来源标签，不该在导入后变成用户备注。 */const CSV_SOURCE_LABELS = new Set([
   "手动记账", "自动捕获", "桥接", "快捷指令",
   "Android 通知", "Android 页面识别", "Android 补发", "Android 分享", "Android 测试"
 ]);
@@ -1352,6 +1594,63 @@ function restoreBackup(file) {
     elements.restoreJson.value = "";
   };
   reader.readAsText(file, "utf-8");
+}
+
+/** 找出历史上的疑似重复并逐笔交给用户决定，不直接改写账本。 */
+function mergeDuplicateEntries() {
+  if (state.entries.length < 2) {
+    showToast("账本里还没有足够多的记录。", "info");
+    return;
+  }
+
+  const sorted = [...state.entries].sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt));
+  const buckets = new Map();
+  let added = 0;
+  for (const entry of sorted) {
+    const amountCents = Math.round(Number(entry.amount || 0) * 100);
+    const time = new Date(entry.occurredAt).getTime();
+    if (amountCents <= 0 || !Number.isFinite(time)) continue;
+    const key = `${amountCents}|${entry.direction || "expense"}`;
+    const bucket = buckets.get(key) || [];
+    for (let index = bucket.length - 1; index >= 0; index -= 1) {
+      const existing = bucket[index];
+      const gap = time - new Date(existing.occurredAt).getTime();
+      if (gap > POSSIBLE_DUPLICATE_WINDOW_MILLIS) break;
+      if (bothExplicitSources(existing, entry) || !isPossibleDuplicatePair(existing, entry)) continue;
+      const alreadyQueued = state.duplicateCandidates.some((candidate) =>
+        (candidate.existingId === existing.id && candidate.entryId === entry.id)
+        || (candidate.existingId === entry.id && candidate.entryId === existing.id)
+      );
+      if (alreadyQueued) continue;
+      state.duplicateCandidates.push({
+        id: crypto.randomUUID(),
+        existingId: existing.id,
+        entryId: entry.id,
+        item: entry,
+        createdAt: new Date().toISOString()
+      });
+      added += 1;
+      if (state.duplicateCandidates.length >= 100) break;
+    }
+    if (!bucket.some((item) => item.id === entry.id)) bucket.push(entry);
+    buckets.set(key, bucket);
+    if (state.duplicateCandidates.length >= 100) break;
+  }
+
+  if (!added && !state.duplicateCandidates.length) {
+    showToast("没有发现需要复核的相近账单。", "info");
+    return;
+  }
+  saveState();
+  // 复核卡片挂在收件箱（#tab-home）顶部，不是账本页——跳到账本会让用户
+  // 点完按钮什么都看不到，以为没找到。
+  switchTab("home");
+  showToast(
+    added
+      ? `找到 ${added} 组疑似重复，已列在收件箱顶部，请逐笔确认。`
+      : "疑似重复都在收件箱顶部，请逐笔确认。",
+    "info"
+  );
 }
 
 function clearAllData() {
@@ -1494,6 +1793,7 @@ function renderSummary() {
 }
 
 function renderLedger() {
+  renderDuplicateReview();
   const categoryNames = state.categories.map((c) => c.name);
   const categories = ["全部", ...categoryNames.filter((category) => state.entries.some((item) => item.category === category))];
   if (elements.ledgerSearch && elements.ledgerSearch.value !== ledgerQuery) {
@@ -1547,27 +1847,27 @@ function renderLedger() {
         item.direction === "transfer"
           ? `
           <div class="ledger-item transfer">
-            <span class="ledger-icon transfer"><svg><use href="#icon-transfer"></use></svg></span>
+            <span class="ledger-icon transfer"><svg><use href="./assets/icons.svg#icon-transfer"></use></svg></span>
             <div class="ledger-main">
               <span class="merchant">${escapeHtml(resolveAccountNameById(item.fromAccountId))} → ${escapeHtml(resolveAccountNameById(item.toAccountId))}</span>
               <div class="meta"><span>${escapeHtml(formatDate(item.occurredAt))}</span>${item.note ? `<span>${escapeHtml(item.note)}</span>` : ""}</div>
             </div>
             <strong class="amount transfer">${money.format(item.amount)}</strong>
             <div class="ledger-actions">
-              <button class="icon-btn" type="button" data-action="edit-transfer" data-id="${escapeHtml(item.id)}" aria-label="修改转账"><svg><use href="#icon-pencil"></use></svg></button>
-              <button class="icon-btn danger" type="button" data-action="delete-transfer" data-id="${escapeHtml(item.id)}" aria-label="删除转账"><svg><use href="#icon-trash"></use></svg></button>
+              <button class="icon-btn" type="button" data-action="edit-transfer" data-id="${escapeHtml(item.id)}" aria-label="修改转账"><svg><use href="./assets/icons.svg#icon-pencil"></use></svg></button>
+              <button class="icon-btn danger" type="button" data-action="delete-transfer" data-id="${escapeHtml(item.id)}" aria-label="删除转账"><svg><use href="./assets/icons.svg#icon-trash"></use></svg></button>
             </div>
           </div>
         `
           : `
           <div class="ledger-item">
-            <span class="ledger-icon"><svg><use href="#${categoryIconId(item.category)}"></use></svg></span>
+            <span class="ledger-icon"><svg><use href="./assets/icons.svg#${categoryIconId(item.category)}"></use></svg></span>
             <div class="ledger-main">
               <span class="merchant">${escapeHtml(item.merchant)}</span>
               <div class="meta">${renderItemMeta(item)}</div>
             </div>
             <strong class="amount ${item.direction === "income" ? "income" : ""}">${item.direction === "income" ? "+" : "-"}${money.format(item.amount)}</strong>
-            <button class="ledger-edit-btn" type="button" data-id="${escapeHtml(item.id)}" aria-label="修改 ${escapeHtml(item.merchant)}"><svg><use href="#icon-pencil"></use></svg></button>
+            <button class="ledger-edit-btn" type="button" data-id="${escapeHtml(item.id)}" aria-label="修改 ${escapeHtml(item.merchant)}"><svg><use href="./assets/icons.svg#icon-pencil"></use></svg></button>
           </div>
         `
       )
@@ -1585,6 +1885,45 @@ function renderLedger() {
   }
 
   renderCategoryChart();
+}
+
+function renderDuplicateReview() {
+  const container = $("#duplicateReview");
+  if (!container) return;
+  const candidates = state.duplicateCandidates || [];
+  container.hidden = candidates.length === 0;
+  if (!candidates.length) {
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="duplicate-review-heading">
+      <strong>可能重复 · ${candidates.length} 笔待确认</strong>
+      <span>信息不够确定，先保留在这里，不计入账本</span>
+    </div>
+    ${candidates.map((candidate) => {
+      const existing = state.entries.find((item) => item.id === candidate.existingId);
+      const incoming = candidate.item || {};
+      const candidateEntryExists = candidate.entryId && state.entries.some((item) => item.id === candidate.entryId);
+      const missingExistingHint = candidateEntryExists
+        ? "另一条记录仍在账本中，保留即可"
+        : "保留候选即可将它记入账本";
+      const keepLabel = existing ? "保留两笔" : candidateEntryExists ? "保留这条记录" : "保留并入账";
+      return `
+        <article class="duplicate-review-card">
+          <div class="duplicate-review-pair">
+            <div><span>账本已有</span><strong>${existing ? `${escapeHtml(existing.merchant || "未知商户")} · ${money.format(existing.amount || 0)}` : "原账单已不存在"}</strong><small>${existing ? escapeHtml(formatDate(existing.occurredAt)) : missingExistingHint}</small></div>
+            <div><span>${candidate.entryId ? "另一条已有记录" : "新捕获"}</span><strong>${escapeHtml(incoming.merchant || "未知商户")} · ${money.format(incoming.amount || 0)}</strong><small>${escapeHtml(formatDate(incoming.occurredAt))}</small></div>
+          </div>
+          <div class="duplicate-review-actions">
+            ${existing ? `<button class="secondary-button compact" type="button" data-action="merge-candidate" data-id="${escapeHtml(candidate.id)}">确认同一笔并合并</button>` : ""}
+            <button class="ghost-button compact" type="button" data-action="keep-candidate" data-id="${escapeHtml(candidate.id)}">${keepLabel}</button>
+          </div>
+        </article>
+      `;
+    }).join("")}
+  `;
 }
 
 function renderItemMeta(item) {
@@ -1759,8 +2098,8 @@ function renderAccounts() {
             ${account.archived ? `<span class="entity-tag">已归档</span>` : ""}
           </div>
           <div class="entity-actions">
-            <button type="button" class="icon-btn chevron-up" data-action="move-up" data-id="${account.id}" aria-label="上移" ${index === 0 ? "disabled" : ""}><svg><use href="#icon-chevron"></use></svg></button>
-            <button type="button" class="icon-btn" data-action="move-down" data-id="${account.id}" aria-label="下移" ${index === sorted.length - 1 ? "disabled" : ""}><svg><use href="#icon-chevron"></use></svg></button>
+            <button type="button" class="icon-btn chevron-up" data-action="move-up" data-id="${account.id}" aria-label="上移" ${index === 0 ? "disabled" : ""}><svg><use href="./assets/icons.svg#icon-chevron"></use></svg></button>
+            <button type="button" class="icon-btn" data-action="move-down" data-id="${account.id}" aria-label="下移" ${index === sorted.length - 1 ? "disabled" : ""}><svg><use href="./assets/icons.svg#icon-chevron"></use></svg></button>
             <button type="button" class="mini-button" data-action="toggle-archive" data-id="${account.id}">${account.archived ? "启用" : "归档"}</button>
           </div>
         </div>
@@ -1861,7 +2200,7 @@ function renderCategoryManager() {
     .map(
       (category, index) => `
         <div class="entity-item">
-          <span class="entity-icon"><svg><use href="#${categoryIconId(category.name)}"></use></svg></span>
+          <span class="entity-icon"><svg><use href="./assets/icons.svg#${categoryIconId(category.name)}"></use></svg></span>
           <div class="entity-main">
             ${
               category.builtin
@@ -1870,9 +2209,9 @@ function renderCategoryManager() {
             }
           </div>
           <div class="entity-actions">
-            <button type="button" class="icon-btn chevron-up" data-action="move-up" data-id="${category.id}" aria-label="上移" ${index === 0 ? "disabled" : ""}><svg><use href="#icon-chevron"></use></svg></button>
-            <button type="button" class="icon-btn" data-action="move-down" data-id="${category.id}" aria-label="下移" ${index === sorted.length - 1 ? "disabled" : ""}><svg><use href="#icon-chevron"></use></svg></button>
-            ${category.builtin ? "" : `<button type="button" class="icon-btn danger" data-action="delete" data-id="${category.id}" aria-label="删除分类"><svg><use href="#icon-trash"></use></svg></button>`}
+            <button type="button" class="icon-btn chevron-up" data-action="move-up" data-id="${category.id}" aria-label="上移" ${index === 0 ? "disabled" : ""}><svg><use href="./assets/icons.svg#icon-chevron"></use></svg></button>
+            <button type="button" class="icon-btn" data-action="move-down" data-id="${category.id}" aria-label="下移" ${index === sorted.length - 1 ? "disabled" : ""}><svg><use href="./assets/icons.svg#icon-chevron"></use></svg></button>
+            ${category.builtin ? "" : `<button type="button" class="icon-btn danger" data-action="delete" data-id="${category.id}" aria-label="删除分类"><svg><use href="./assets/icons.svg#icon-trash"></use></svg></button>`}
           </div>
         </div>
       `
@@ -2019,7 +2358,7 @@ function showToast(message, type = "info", options = {}) {
   const undoHtml = options.onUndo ? `<button class="toast-undo" type="button" id="toastUndoBtn">撤销</button>` : "";
   const closeHtml = type === "error" ? `<button class="toast-close" type="button" id="toastCloseBtn" aria-label="关闭提示">关闭</button>` : "";
   elements.toast.innerHTML = `
-    <span class="toast-icon"><svg><use href="#${iconId}"></use></svg></span>
+    <span class="toast-icon"><svg><use href="./assets/icons.svg#${iconId}"></use></svg></span>
     <span class="toast-message">${escapeHtml(message)}</span>
     ${undoHtml}
     ${closeHtml}

@@ -109,15 +109,6 @@ select:focus-visible {
   border: 0;
 }
 
-/*
- * 图标精灵只是 <symbol> 的容器。HTML 上写的 hidden 属性在这里不生效：
- * SVG 默认按 inline 元素排版，会实打实占掉 150px 高度。
- * 结果就是每台手机打开都先看到一片空白，再往下才是内容。
- */
-.icon-sprite {
-  display: none;
-}
-
 .app-shell {
   display: grid;
   /* 列宽必须显式收窄：grid 列默认按内容宽度，tab 栏的 min-content（5×108px）
@@ -891,6 +882,62 @@ select:focus {
 
 .ledger-item {
   padding: var(--space-3);
+}
+
+.duplicate-review {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid rgba(164, 67, 45, 0.28);
+  border-radius: var(--radius-button);
+  background: var(--accent-soft);
+}
+
+.duplicate-review[hidden] {
+  display: none;
+}
+
+.duplicate-review-heading,
+.duplicate-review-card,
+.duplicate-review-pair,
+.duplicate-review-pair > div,
+.duplicate-review-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.duplicate-review-heading > span,
+.duplicate-review-pair span,
+.duplicate-review-pair small {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.duplicate-review-card {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.duplicate-review-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.duplicate-review-pair strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.duplicate-review-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 4px;
+}
+
+.duplicate-review-actions button {
+  min-height: 42px;
+  padding-inline: 8px;
+  font-size: 13px;
 }
 
 .ledger-icon {
