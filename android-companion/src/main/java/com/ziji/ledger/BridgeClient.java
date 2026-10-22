@@ -20,11 +20,15 @@ public final class BridgeClient {
     }
 
     public void postCapture(String text) throws IOException {
+        postCapture("", text);
+    }
+
+    public void postCapture(String captureId, String text) throws IOException {
         if (isBlank(endpoint)) {
             throw new IOException("Bridge endpoint is empty");
         }
 
-        byte[] body = jsonBody(text).getBytes(StandardCharsets.UTF_8);
+        byte[] body = jsonBody(captureId, text).getBytes(StandardCharsets.UTF_8);
         HttpURLConnection connection = (HttpURLConnection) URI.create(endpoint).toURL().openConnection();
         try {
             connection.setRequestMethod("POST");
@@ -88,8 +92,9 @@ public final class BridgeClient {
         }
     }
 
-    private String jsonBody(String text) {
-        return "{\"source\":\"" + escape(source) + "\",\"text\":\"" + escape(text) + "\"}";
+    private String jsonBody(String captureId, String text) {
+        String id = isBlank(captureId) ? "" : ",\"captureId\":\"" + escape(captureId) + "\"";
+        return "{\"source\":\"" + escape(source) + "\"" + id + ",\"text\":\"" + escape(text) + "\"}";
     }
 
     /**

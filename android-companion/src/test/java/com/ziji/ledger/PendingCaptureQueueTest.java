@@ -17,7 +17,13 @@ public final class PendingCaptureQueueTest {
         assertTrue("remove restored item", restored.remove("微信 支付 46.80元"));
         assertEquals("size after remove", 1, restored.size());
 
-        System.out.println("pending capture queue tests passed: 8");
+        PendingCaptureQueue eventQueue = new PendingCaptureQueue(5);
+        assertTrue("first event text", eventQueue.add("event-1", "same payment"));
+        assertFalse("same event text retry", eventQueue.add("event-1", "same payment"));
+        assertTrue("different event with same text", eventQueue.add("event-2", "same payment"));
+        assertEquals("distinct events remain queued", 2, eventQueue.size());
+
+        System.out.println("pending capture queue tests passed: 12");
     }
 
     private static void assertTrue(String name, boolean value) {

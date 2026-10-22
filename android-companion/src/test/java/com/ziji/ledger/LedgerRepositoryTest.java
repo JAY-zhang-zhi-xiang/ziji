@@ -16,6 +16,12 @@ public final class LedgerRepositoryTest {
         backupRoundTripKeepsLedgerRulesAndQueue();
         emptyBackupNeverClearsLedger();
         keepsLaterIdenticalPayments();
+        stableNotificationEventsAreIdempotentWithoutDroppingNewPayments();
+        mergesCrossChannelDuplicate();
+        mergesExistingDuplicatesInLedger();
+        mergeConfirmedDuplicateHandlesReversedIndexes();
+        historicalDuplicateCandidatesRequireConfirmation();
+        preservesSameMinuteDifferentMerchantsDuringCleanup();
         incrementalWriteKeepsHistory();
         writeFailureIsNotReportedAsDuplicate();
         cacheAndRecoveryStayConsistent();
@@ -26,8 +32,11 @@ public final class LedgerRepositoryTest {
         learnsMerchantCategory();
         learnsProductCategory();
         atomicPendingCaptureAppendAndRemove();
+        pendingDuplicateCaptureSurvivesHistoryPruning();
         backfillsHistoryWhenCategoryIsLearned();
         editingKeepsSourceAndPurpose();
+        keepsIdenticalManualEntries();
+        explicitlyReviewedCandidateCanMergeOrRemainDistinct();
         System.out.println("ledger repository tests passed: " + checks);
     }
 
@@ -142,6 +151,12 @@ public final class LedgerRepositoryTest {
         PendingCaptureQueue queue = new PendingCaptureQueue(10);
         queue.add("微信支付 向 瑞幸咖啡 支付 ¥18.00");
         source.savePendingQueue(queue);
+        String pendingId = source.snapshot().pendingCaptureItems.get(0).id;
+
+        LedgerRepository replacement = LedgerRepository.open(tempDir());
+        assertTrue(replacement.replaceAll(source.snapshot()), "snapshot replacement succeeds");
+        assertEquals(pendingId, replacement.snapshot().pendingCaptureItems.get(0).id,
+                "snapshot replacement preserves outbox event identity");
 
         String backup = source.exportBackup();
         LedgerRepository restored = LedgerRepository.open(tempDir());
@@ -150,6 +165,8 @@ public final class LedgerRepositoryTest {
         assertEquals(1, snapshot.transactions.size(), "backup should keep transactions");
         assertEquals("瑞幸\t咖啡", snapshot.rules.get(0), "backup should keep rules");
         assertEquals(1, snapshot.pendingCaptures.size(), "backup should keep pending sync queue");
+        assertEquals(pendingId, snapshot.pendingCaptureItems.get(0).id,
+                "backup restore preserves pending event identity");
     }
 
     /**
@@ -191,6 +208,22 @@ public final class LedgerRepositoryTest {
         assertEquals(2, snapshot.transactions.size(), "both transfers should be kept");
     }
 
+    private static void stableNotificationEventsAreIdempotentWithoutDroppingNewPayments() throws Exception {
+        LedgerRepository repository = LedgerRepository.open(tempDir());
+        String text = "微信支付 向 星巴克 支付 12.50元";
+        LedgerEntry first = TransactionParser.parse("com.tencent.mm", text, 1_000_000L, null, "event-1");
+        LedgerEntry retry = TransactionParser.parse("com.tencent.mm", text, 1_000_000L, null, "event-1");
+        LedgerEntry second = TransactionParser.parse("com.tencent.mm", text, 1_001_000L, null, "event-2");
+
+        assertEquals(LedgerRepository.AddResult.ADDED, repository.addTransactionResult(first),
+                "first stable event is inserted");
+        assertEquals(LedgerRepository.AddResult.DUPLICATE, repository.addTransactionResult(retry),
+                "replaying the same event remains idempotent");
+        assertEquals(LedgerRepository.AddResult.ADDED, repository.addTransactionResult(second),
+                "a distinct event with identical text is a separate transaction");
+        assertEquals(2, repository.transactionCount(), "new identical-text event is not lost");
+    }
+
     /**
      * 回归测试：账本超过读取上限时，新增一笔不能把历史记录挤掉。
      *
@@ -198,6 +231,345 @@ public final class LedgerRepositoryTest {
      * 账本超过上限后，每记一笔就会静默丢掉一条历史记录。
      * 现在通知通道改为 addTransaction 增量写入，这里锁定该行为。
      */
+    /**
+     * 用户截图里的重复：同一笔 ¥55，页面通道记下「大连好利来」，
+     * 通知通道晚 20 秒只解析出「未知商户」，两条都进了账本。
+     *
+     * 判重不能再指望指纹——两条原文不同，指纹必然不同。写入口（唯一落盘点）
+     * 必须按「金额 + 方向 + 时间」认出这是同一笔，并且把更全的信息合并进去，
+     * 而不是把带商户名的那条丢掉。
+     */
+    private static void mergesCrossChannelDuplicate() throws Exception {
+        File dir = tempDir();
+        LedgerRepository repository = LedgerRepository.open(dir);
+        long at = 1_760_000_000_000L;
+
+        LedgerEntry page = TransactionParser.fromPage(
+                "com.tencent.mm",
+                "支付成功 ¥55.00 大连好利来 付款方式 零钱",
+                5500L,
+                "大连好利来",
+                "expense",
+                at,
+                new java.util.ArrayList<>(),
+                ""
+        );
+        assertEquals(LedgerRepository.AddResult.ADDED, repository.addTransactionResult(page),
+                "页面通道先记一笔");
+
+        // 通知通道的同一笔：晚 20 秒、认不出商户、文本完全不同。
+        LedgerEntry notification = TransactionParser.parse(
+                "com.tencent.mm",
+                "微信支付 支付成功 ¥55.00",
+                at + 20_000L
+        );
+        assertEquals("未知商户", notification.merchant, "通知里没有商户信息");
+        // 通知这条信息量更少（商户更差、原文更短），判定为同一笔并直接丢弃。
+        // 关键不是返回值，而是「账本不会变成两条」。
+        assertEquals(LedgerRepository.AddResult.DUPLICATE, repository.addTransactionResult(notification),
+                "信息更少的同笔记录应被判定为重复，而不是新增");
+
+        LedgerRepositorySnapshot snapshot = repository.snapshot();
+        assertEquals(1, snapshot.transactions.size(), "同一笔只应留下一条");
+        assertEquals("大连好利来", snapshot.transactions.get(0).merchant, "合并后保留可信的商户名");
+
+        // 反过来：带商户名的后到，也不能把账本变成两条，而且要把商户名补上。
+        File secondDir = tempDir();
+        LedgerRepository reversed = LedgerRepository.open(secondDir);
+        assertEquals(LedgerRepository.AddResult.ADDED, reversed.addTransactionResult(
+                TransactionParser.parse("com.tencent.mm", "微信支付 支付成功 ¥55.00", at)
+        ), "通知先记一笔");
+        assertEquals(LedgerRepository.AddResult.MERGED, reversed.addTransactionResult(page),
+                "页面后到应合并");
+        assertEquals(1, reversed.transactionCount(), "同一笔只应留下一条");
+        assertEquals("大连好利来", reversed.snapshot().transactions.get(0).merchant,
+                "后到的商户名要补进原记录");
+    }
+
+    /**
+     * 已经躺在账本里的重复，要能被一次性清掉。
+     *
+     * 判重只防「以后」，用户升级完看到的还是那几条重复——必须有一个显式的合并入口，
+     * 规则与实时判重完全一致，否则「修好了」只是看起来修好了。
+     */
+    private static void mergesExistingDuplicatesInLedger() throws Exception {
+        File dir = tempDir();
+        LedgerRepository repository = LedgerRepository.open(dir);
+        long at = 1_760_000_000_000L;
+
+        LedgerEntry page = TransactionParser.fromPage(
+                "com.tencent.mm", "支付成功 ¥14.00 红姐包子-软景店", 1400L, "红姐包子-软景店",
+                "expense", at, new java.util.ArrayList<>(), ""
+        );
+        LedgerEntry notification = TransactionParser.parse(
+                "com.tencent.mm", "微信支付 支付成功 ¥14.00", at + 5_000L
+        );
+        // 直接整表写入，绕过入库判重，模拟「历史版本已经记重复」的账本。
+        LocalLedger legacy = new LocalLedger(10);
+        legacy.add(page);
+        legacy.add(notification);
+        assertEquals(2, legacy.size(), "两条不同原文都应进内存账本");
+        assertTrue(repository.replaceLedger(legacy), "写盘成功");
+        assertEquals(2, repository.transactionCount(), "账本里确实有两条重复");
+
+        List<LedgerRepository.DuplicatePair> candidates = repository.findHistoricalDuplicateCandidates();
+        assertEquals(1, candidates.size(), "历史相近账单应先成为复核候选");
+        assertEquals(2, repository.transactionCount(), "扫描候选不修改历史账本");
+        assertTrue(repository.mergeConfirmedDuplicate(candidates.get(0).existing.id, candidates.get(0).candidate.id),
+                "只有明确确认后才合并");
+        assertEquals(1, repository.transactionCount(), "确认后只剩一条");
+        assertEquals("红姐包子-软景店", repository.snapshot().transactions.get(0).merchant,
+                "保留带商户名的那条");
+
+        // 同店隔 6 分钟可能是真实复购，只能作为候选，不能自动合并。
+        File looseDir = tempDir();
+        LedgerRepository loose = LedgerRepository.open(looseDir);
+        LocalLedger sixMinutes = new LocalLedger(10);
+        sixMinutes.add(TransactionParser.parse("com.tencent.mm", "微信支付 支付成功 ¥14.00 商家：红姐包子", at));
+        sixMinutes.add(TransactionParser.parse("com.tencent.mm", "微信支付 向 红姐包子 付款 14.00元", at + 6 * 60_000L));
+        assertEquals(2, sixMinutes.size(), "两条应在内存账本里");
+        assertTrue(loose.replaceLedger(sixMinutes), "写盘成功");
+        assertEquals(1, loose.findHistoricalDuplicateCandidates().size(), "可能复购的历史组合交给用户复核");
+        assertEquals(2, loose.transactionCount(), "未确认的历史交易保持两条");
+    }
+
+    /**
+     * 合并时「主记录排在重复记录之后」的下标越界回归。
+     *
+     * 账本按时间倒序存放（最新的在最前）。用户确认一对重复时，传入的 existingId
+     * 可能是那条更晚、更靠前的记录，duplicateId 反而是更早、更靠后的那条，
+     * 于是 existingIndex < duplicateIndex 并不总是成立。旧实现直接
+     * set(existingIndex, merged) + remove(duplicateIndex)，当 existingIndex > duplicateIndex
+     * 时 remove 让列表前移，合并结果会覆盖到一条完全无关的记录上。
+     */
+    private static void mergeConfirmedDuplicateHandlesReversedIndexes() throws Exception {
+        long at = 1_760_000_000_000L;
+        File dir = tempDir();
+        LedgerRepository repository = LedgerRepository.open(dir);
+
+        // 三条记录，时间递增；账本内部按时间倒序存放，所以 existingId 对应最晚那条（下标 0）。
+        LedgerEntry older = TransactionParser.parse("com.tencent.mm", "微信支付 支付成功 ¥14.00", at);
+        LedgerEntry middle = TransactionParser.parse("com.tencent.mm", "微信支付 向 星巴克 付款 32.00元", at + 60_000L);
+        LedgerEntry newer = TransactionParser.fromPage(
+                "com.tencent.mm", "支付成功 ¥14.00 红姐包子-软景店", 1400L, "红姐包子-软景店",
+                "expense", at + 120_000L, new java.util.ArrayList<>(), ""
+        );
+        LocalLedger legacy = new LocalLedger(10);
+        legacy.add(older);
+        legacy.add(middle);
+        legacy.add(newer);
+        assertTrue(repository.replaceLedger(legacy), "写盘成功");
+        assertEquals(3, repository.transactionCount(), "三条记录都在账本里");
+
+        // newer（下标 0）与 older（下标 2）是同一笔：existingIndex=0 < duplicateIndex=2。
+        // 更关键的相反情形由下面的翻转调用覆盖：existing 在下标更靠后的位置。
+        // 这里故意让 existingId 指向靠后的那条，验证「删除两条再按位插回」不会错位。
+        assertTrue(repository.mergeConfirmedDuplicate(newer.id, older.id),
+                "主记录在前、重复在后时应能合并");
+
+        LedgerRepositorySnapshot after = repository.snapshot();
+        assertEquals(2, after.transactions.size(), "合并后剩两条");
+        // 无关的「星巴克 32」这条必须原样保留，不能因为下标错位被覆盖或删除。
+        boolean starbucksKept = false;
+        for (LedgerEntry entry : after.transactions) {
+            if ("星巴克".equals(entry.merchant) && entry.amountCents == 3200L) starbucksKept = true;
+        }
+        assertTrue(starbucksKept, "无关的中间记录必须原样保留");
+
+        // 反过来：主记录（existing）排在被删的重复记录之后。
+        File reversedDir = tempDir();
+        LedgerRepository reversed = LedgerRepository.open(reversedDir);
+        LedgerEntry earlySparse = TransactionParser.parse("com.tencent.mm", "微信支付 支付成功 ¥14.00", at);
+        LedgerEntry lateDetailed = TransactionParser.fromPage(
+                "com.tencent.mm", "支付成功 ¥14.00 红姐包子-软景店", 1400L, "红姐包子-软景店",
+                "expense", at + 120_000L, new java.util.ArrayList<>(), ""
+        );
+        LedgerEntry unrelated = TransactionParser.parse("com.tencent.mm", "微信支付 向 星巴克 付款 32.00元", at + 240_000L);
+        LocalLedger legacyReversed = new LocalLedger(10);
+        legacyReversed.add(earlySparse);
+        legacyReversed.add(lateDetailed);
+        legacyReversed.add(unrelated);
+        assertTrue(reversed.replaceLedger(legacyReversed), "写盘成功");
+
+        // unrelated 最晚、下标 0；lateDetailed 下标 1（existing），earlySparse 下标 2（duplicate）。
+        // existingIndex=1 > duplicateIndex=2 成立，正是旧实现会越界的场景。
+        assertTrue(reversed.mergeConfirmedDuplicate(lateDetailed.id, earlySparse.id),
+                "主记录排在重复记录之后时应能正确合并");
+        LedgerRepositorySnapshot reversedAfter = reversed.snapshot();
+        assertEquals(2, reversedAfter.transactions.size(), "合并后剩两条");
+        boolean reversedStarbucksKept = false;
+        boolean mergedMerchantKept = false;
+        for (LedgerEntry entry : reversedAfter.transactions) {
+            if ("星巴克".equals(entry.merchant) && entry.amountCents == 3200L) reversedStarbucksKept = true;
+            if ("红姐包子-软景店".equals(entry.merchant) && entry.amountCents == 1400L) mergedMerchantKept = true;
+        }
+        assertTrue(reversedStarbucksKept, "无关记录不能被下标错位覆盖");
+        assertTrue(mergedMerchantKept, "合并结果应保留可信商户名");
+    }
+
+    private static void preservesSameMinuteDifferentMerchantsDuringCleanup() throws Exception {
+        LedgerRepository repository = LedgerRepository.open(tempDir());
+        long at = 1_760_000_000_000L;
+        LocalLedger entries = new LocalLedger(10);
+        entries.add(TransactionParser.parse("com.tencent.mm", "微信支付 向 瑞幸咖啡 付款 14.00元", at));
+        entries.add(TransactionParser.parse("com.tencent.mm", "微信支付 向 星巴克 付款 14.00元", at + 5_000L));
+        assertTrue(repository.replaceLedger(entries), "写盘成功");
+
+        assertEquals(0, repository.findHistoricalDuplicateCandidates().size(), "不同明确商户不应列为相似候选");
+        assertEquals(2, repository.transactionCount(), "两笔真实消费都必须保留");
+    }
+
+    private static void historicalDuplicateCandidatesRequireConfirmation() throws Exception {
+        File dir = tempDir();
+        LedgerRepository repository = LedgerRepository.open(dir);
+        long at = 1_760_000_000_000L;
+        LedgerEntry detailed = TransactionParser.fromPage(
+                "com.tencent.mm", "支付成功 ¥14.00 红姐包子-软景店", 1400L, "红姐包子-软景店",
+                "expense", at, new java.util.ArrayList<>(), "早餐"
+        );
+        LedgerEntry sparse = TransactionParser.parse("com.tencent.mm", "微信支付 支付成功 ¥14.00", at + 5_000L);
+        LocalLedger legacy = new LocalLedger(10);
+        assertTrue(legacy.add(detailed), "历史详细记录应加入测试账本");
+        assertTrue(legacy.add(sparse), "历史简略记录应加入测试账本");
+        assertTrue(repository.replaceLedger(legacy), "写入模拟的历史账本");
+
+        List<LedgerRepository.DuplicatePair> candidates = repository.findHistoricalDuplicateCandidates();
+        assertEquals(1, candidates.size(), "相近的同额历史账单应成为复核候选");
+        assertEquals(2, repository.transactionCount(), "扫描不能自动修改历史账本");
+        assertEquals(detailed.id, candidates.get(0).existing.id, "候选保留较早记录作为主记录");
+        assertEquals(0, repository.findHistoricalDuplicateCandidates(
+                java.util.Collections.singleton(candidates.get(0).reviewKey())).size(),
+                "已选择保留两笔的组合不应每次重复提示");
+        assertTrue(repository.mergeConfirmedDuplicate(candidates.get(0).existing.id, candidates.get(0).candidate.id),
+                "用户确认后应能合并候选");
+        assertEquals(1, repository.transactionCount(), "确认后只保留一条账单");
+        assertEquals("红姐包子-软景店", repository.snapshot().transactions.get(0).merchant,
+                "合并后保留更完整的商户信息");
+
+        File ambiguousDir = tempDir();
+        LedgerRepository ambiguous = LedgerRepository.open(ambiguousDir);
+        LocalLedger uncertain = new LocalLedger(10);
+        uncertain.add(TransactionParser.parse("com.tencent.mm", "微信支付 支付成功 ¥8.00", at));
+        uncertain.add(TransactionParser.parse("com.tencent.mm", "微信支付 支付成功 ¥8.00", at + 3 * 60_000L));
+        assertTrue(ambiguous.replaceLedger(uncertain), "写入两条可能是复购的历史记录");
+        assertEquals(1, ambiguous.findHistoricalDuplicateCandidates().size(), "不确定组合列为逐笔候选");
+        assertEquals(2, ambiguous.transactionCount(), "未确认的候选必须保留两条");
+
+        LedgerRepository stale = LedgerRepository.open(tempDir());
+        LocalLedger staleLedger = LocalLedger.fromEntries(java.util.Arrays.asList(
+                TransactionParser.parse("com.tencent.mm", "微信支付 支付成功 ¥8.00", at),
+                TransactionParser.parse("com.tencent.mm", "微信支付 支付成功 ¥8.00", at + 5_000L)
+        ), 10);
+        assertTrue(stale.replaceLedger(staleLedger), "写入待复核账单");
+        LedgerRepository.DuplicatePair stalePair = stale.findHistoricalDuplicateCandidates().get(0);
+        LedgerEntry edited = stalePair.candidate.withEdits(
+                stalePair.candidate.amountCents + 100L,
+                stalePair.candidate.direction,
+                stalePair.candidate.merchant,
+                stalePair.candidate.account,
+                stalePair.candidate.category,
+                stalePair.candidate.note,
+                stalePair.candidate.occurredAtMillis
+        );
+        assertTrue(stale.updateTransaction(edited), "模拟用户在复核前编辑账单");
+        assertFalse(stale.mergeConfirmedDuplicate(stalePair.existing.id, stalePair.candidate.id),
+                "候选变更后应拒绝按旧提示合并");
+        assertEquals(2, stale.transactionCount(), "过期候选不能误删修改后的账单");
+    }
+
+    /**
+     * 人工录入的两笔同额同店流水必须各自留下。
+     *
+     * 自动判重是为「机器可能把同一笔看两遍」设计的；人工录入是用户明确要记一笔。
+     * 之前手动记账也走同一条判重，用户在同一家店连买两杯同样价钱的咖啡、手动记
+     * 两次，第二次会被并进第一条，界面还弹「保存失败，请重试」——钱被吞了。
+     */
+    private static void keepsIdenticalManualEntries() throws Exception {
+        long at = 1_760_000_000_000L;
+        File dir = tempDir();
+        LedgerRepository repository = LedgerRepository.open(dir);
+
+        assertEquals(LedgerRepository.AddResult.ADDED,
+                repository.addExplicitTransactionResult(manualEntry("manual-a", at)),
+                "手动记账第一笔");
+        assertEquals(LedgerRepository.AddResult.ADDED,
+                repository.addExplicitTransactionResult(manualEntry("manual-b", at + 30_000L)),
+                "手动记账第二笔：同额同店也必须是新增");
+        assertEquals(2, repository.transactionCount(), "两笔手动记账都要留下");
+
+        // 批量入库（CSV 导入）同一口径：历史账本按原样进来，不替用户改账。
+        File batchDir = tempDir();
+        LedgerRepository batch = LedgerRepository.open(batchDir);
+        int added = batch.addTransactions(java.util.Arrays.asList(
+                manualEntry("csv-a", at),
+                manualEntry("csv-b", at + 30_000L)
+        ));
+        assertEquals(2, added, "同额同店的两条 CSV 记录都应导入");
+        assertEquals(2, batch.transactionCount(), "CSV 导入不做同笔合并");
+
+        // 对照：自动采集通道仍然要合并同一笔，否则重复记账就回来了。
+        File autoDir = tempDir();
+        LedgerRepository auto = LedgerRepository.open(autoDir);
+        assertEquals(LedgerRepository.AddResult.ADDED,
+                auto.addTransactionResult(autoEntry(at)), "自动通道第一笔");
+        LedgerEntry samePaymentFromNotification = new LedgerEntry(
+                "auto-notification-" + at, 2800L, "expense", "瑞幸咖啡", "零钱", "餐饮",
+                at + 15_000L, "微信支付 支付成功 ¥28.00 瑞幸咖啡", "com.tencent.mm", "notification",
+                LedgerCodec.fingerprint("notification-" + at), at, at, 0L, true, ""
+        );
+        assertTrue(auto.addTransactionResult(samePaymentFromNotification) != LedgerRepository.AddResult.ADDED,
+                "不同自动采集通道确认是同一笔时仍应合并");
+        assertEquals(1, auto.transactionCount(), "跨通道同一笔只留一条");
+
+        assertEquals(1, repository.findHistoricalDuplicateCandidates().size(), "人工流水只作为需用户确认的候选");
+        assertEquals(2, repository.transactionCount(), "两条人工录入未确认前始终保留");
+    }
+
+    private static LedgerEntry manualEntry(String id, long occurredAtMillis) {
+        return new LedgerEntry(
+                id, 2800L, "expense", "瑞幸咖啡", "现金", "餐饮",
+                occurredAtMillis, "手动记账 · 瑞幸咖啡", "manual", "manual",
+                LedgerCodec.fingerprint(id), occurredAtMillis, occurredAtMillis, 0L, true, "咖啡"
+        );
+    }
+
+    private static LedgerEntry autoEntry(long occurredAtMillis) {
+        String id = "auto-" + occurredAtMillis;
+        return new LedgerEntry(
+                id, 2800L, "expense", "瑞幸咖啡", "零钱", "餐饮",
+                occurredAtMillis, "微信支付 支付成功 ¥28.00 瑞幸咖啡", "com.tencent.mm", "page",
+                LedgerCodec.fingerprint(id), occurredAtMillis, occurredAtMillis, 0L, true, ""
+        );
+    }
+
+    private static void explicitlyReviewedCandidateCanMergeOrRemainDistinct() throws Exception {
+        LedgerRepository repository = LedgerRepository.open(tempDir());
+        long at = 1_760_000_000_000L;
+        LedgerEntry original = new LedgerEntry(
+                "review-original", 1400L, "expense", "未知商户", "未识别账户", "其他", at,
+                "支付成功 14.00", "com.tencent.mm", "notification", "fp-original", at, at, 0L, true, ""
+        );
+        LedgerEntry candidate = new LedgerEntry(
+                "review-candidate", 1400L, "expense", "瑞幸咖啡", "微信", "餐饮", at + 90_000L,
+                "支付成功 瑞幸咖啡 14.00 商品说明 早餐", "com.tencent.mm", "accessibility", "fp-candidate", at, at, 0L, true, "早餐"
+        );
+        assertEquals(LedgerRepository.AddResult.ADDED, repository.addTransactionResult(original), "原账单入账");
+        assertEquals(LedgerRepository.AddResult.MERGED,
+                repository.mergeCaptureIntoExisting(original.id, candidate), "用户确认重复后合并候选信息");
+        assertEquals(1, repository.transactionCount(), "确认重复只保留一笔账");
+        assertEquals("瑞幸咖啡", repository.snapshot().transactions.get(0).merchant, "候选商户信息合入");
+        assertEquals("早餐", repository.snapshot().transactions.get(0).note, "候选用途信息合入");
+
+        LedgerEntry kept = new LedgerEntry(
+                "review-kept", 1400L, "expense", "瑞幸咖啡", "微信", "餐饮", at + 90_000L,
+                candidate.rawText, candidate.sourcePackage, candidate.sourceType, original.fingerprint,
+                at, at, 0L, true, "早餐"
+        );
+        assertEquals(LedgerRepository.AddResult.ADDED, repository.addExplicitTransactionResult(kept),
+                "用户明确选择保留两笔时，不应被自动指纹去重拦截");
+        assertEquals(2, repository.transactionCount(), "用户选择保留后两笔都在账本里");
+    }
+
     private static void incrementalWriteKeepsHistory() throws Exception {
         File dir = tempDir();
         LedgerRepository repository = LedgerRepository.open(dir);
@@ -458,22 +830,55 @@ public final class LedgerRepositoryTest {
         File dir = tempDir();
         LedgerRepository repository = LedgerRepository.open(dir);
 
-        assertTrue(repository.addPendingCapture("支付宝 向 星巴克 付款 32.00元"), "first append succeeds");
-        assertTrue(repository.addPendingCapture("微信 支付 46.80元"), "second append succeeds");
-        assertFalse(repository.addPendingCapture("支付宝 向 星巴克 付款 32.00元"), "same fingerprint is deduped");
+        assertTrue(repository.addPendingCapture("支付宝 向 星巴克 付款 32.00元", "event-1"), "first append succeeds");
+        assertTrue(repository.addPendingCapture("微信 支付 46.80元", "event-2"), "second append succeeds");
+        assertFalse(repository.addPendingCapture("支付宝 向 星巴克 付款 32.00元", "event-1"),
+                "retrying the same event ID is deduped");
+        assertTrue(repository.addPendingCapture("支付宝 向 星巴克 付款 32.00元", "event-3"),
+                "identical text from a distinct event remains queued");
 
         PendingCaptureQueue queue = repository.loadPendingQueue(10);
-        assertEquals(2, queue.size(), "two distinct captures queued");
+        assertEquals(3, queue.size(), "same text outside the retry window remains a distinct capture");
 
         // 删除一条：只删这一条，另一条不受影响。
         assertTrue(repository.removePendingCapture("支付宝 向 星巴克 付款 32.00元"), "remove existing succeeds");
         PendingCaptureQueue afterRemove = repository.loadPendingQueue(10);
-        assertEquals(1, afterRemove.size(), "one left after removal");
-        assertTrue(afterRemove.items().get(0).contains("46.80"), "the other capture survives");
+        assertEquals(2, afterRemove.size(), "one matching capture removed");
+        assertTrue(afterRemove.items().stream().anyMatch(item -> item.contains("46.80")), "the other capture survives");
 
         // 删不存在的：返回 false，不动队列。
         assertFalse(repository.removePendingCapture("不存在的记录"), "removing absent capture returns false");
-        assertEquals(1, repository.loadPendingQueue(10).size(), "absent removal leaves queue intact");
+        assertEquals(2, repository.loadPendingQueue(10).size(), "absent removal leaves queue intact");
+    }
+
+    private static void pendingDuplicateCaptureSurvivesHistoryPruning() throws Exception {
+        LedgerRepository repository = LedgerRepository.open(tempDir());
+        CaptureEvent candidate = new CaptureEvent(
+                1_760_000_000_000L, "possible_duplicate", CaptureHistory.possibleDuplicateReason("entry-1"),
+                "com.tencent.mm", "微信支付 ¥18.00");
+        repository.addCaptureEvent(candidate);
+        for (int index = 0; index < 40; index += 1) {
+            repository.addCaptureEvent(new CaptureEvent(
+                    candidate.timestampMillis + index + 1, "captured", "captured",
+                    "com.tencent.mm", "普通记录 " + index));
+        }
+        List<CaptureEvent> history = repository.loadCaptureHistory(30).entries();
+        assertTrue(containsPendingCapture(candidate, history), "待复核事件不能被普通日志挤出历史上限");
+
+        repository.addCaptureEvent(new CaptureEvent(
+                candidate.timestampMillis + 100, "resolved",
+                CaptureHistory.resolutionReason(candidate, "candidate_kept"),
+                candidate.packageName, candidate.text));
+        history = repository.loadCaptureHistory(30).entries();
+        assertFalse(containsPendingCapture(candidate, history), "已处理事件可以从待复核队列中移出");
+    }
+
+    private static boolean containsPendingCapture(CaptureEvent candidate, List<CaptureEvent> events) {
+        for (CaptureEvent event : events) {
+            if (candidate.reason.equals(event.reason) && candidate.timestampMillis == event.timestampMillis
+                    && CaptureHistory.isPendingDuplicate(event, events)) return true;
+        }
+        return false;
     }
 
     /**

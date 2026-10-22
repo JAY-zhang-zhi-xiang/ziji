@@ -96,7 +96,28 @@ public final class NotificationCaptureProcessorTest {
         assertEquals("missing_amount", zeroAmount.reason, "zero amount should be rejected as invalid");
         assertEquals(3, ledger.size(), "zero amount should not enter ledger");
         assertEquals(3, queue.size(), "zero amount should not enter queue");
-        System.out.println("notification capture processor tests passed: 23");
+
+        NotificationDeduper eventDeduper = new NotificationDeduper(120_000L, 20);
+        LocalLedger eventLedger = new LocalLedger(20);
+        PendingCaptureQueue eventQueue = new PendingCaptureQueue(20);
+        NotificationCaptureProcessor.Result firstEvent = processor.process(
+                "com.tencent.mm", "微信支付", "微信支付 向 星巴克 支付 12.50元",
+                10_000L, 10_000L, eventDeduper, eventLedger, eventQueue, null, "event-1"
+        );
+        NotificationCaptureProcessor.Result distinctEvent = processor.process(
+                "com.tencent.mm", "微信支付", "微信支付 向 星巴克 支付 12.50元",
+                11_000L, 11_000L, eventDeduper, eventLedger, eventQueue, null, "event-2"
+        );
+        NotificationCaptureProcessor.Result eventRetry = processor.process(
+                "com.tencent.mm", "微信支付", "微信支付 向 星巴克 支付 12.50元",
+                11_000L, 12_000L, eventDeduper, eventLedger, eventQueue, null, "event-2"
+        );
+        assertTrue(firstEvent.recorded, "first stable notification event is recorded");
+        assertTrue(distinctEvent.recorded, "same text from a second notification event is recorded");
+        assertFalse(eventRetry.fresh, "retry of the same notification event is ignored");
+        assertEquals(2, eventLedger.size(), "two distinct events with identical text remain two transactions");
+        assertEquals(2, eventQueue.size(), "both distinct events are queued once");
+        System.out.println("notification capture processor tests passed: 28");
     }
 
     private static void assertTrue(boolean value, String message) {

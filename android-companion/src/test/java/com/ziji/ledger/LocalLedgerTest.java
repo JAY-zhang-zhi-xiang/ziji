@@ -11,15 +11,21 @@ public final class LocalLedgerTest {
         LedgerEntry third = TransactionParser.parse("com.android.mms", "招商银行 在 永辉超市 消费人民币30.00元", 3000L);
 
         assertTrue(ledger.add(first), "first entry should be added");
-        assertFalse(ledger.add(duplicate), "duplicate entry should be ignored");
+        assertTrue(ledger.add(duplicate), "identical text with a distinct transaction ID is not enough evidence to drop a payment");
         assertTrue(ledger.add(second), "second entry should be added");
         assertTrue(ledger.add(third), "third entry should be added");
         assertEquals(2, ledger.size(), "ledger should enforce max entries");
         assertEquals(5000L, ledger.expenseTotalSince(1500L), "expense total should use stored cents");
 
-        // 同一笔通知在服务重启后被重复投递：时间几乎相同，应当去重。
-        LedgerEntry repeatedAfterRestart = TransactionParser.parse("com.eg.android.alipaygphone", "支付宝 向 滴滴出行 付款 20.00元", 2300L);
-        assertFalse(ledger.add(repeatedAfterRestart), "same notification fingerprint should be deduped");
+        // 稳定事件 ID 跨服务重启保持不变：重放幂等；新事件即使原文相同也保留。
+        LocalLedger eventLedger = new LocalLedger(10);
+        String notificationText = "支付宝 向 滴滴出行 付款 20.00元";
+        LedgerEntry firstEvent = TransactionParser.parse("com.eg.android.alipaygphone", notificationText, 2300L, null, "notification-1");
+        LedgerEntry retriedEvent = TransactionParser.parse("com.eg.android.alipaygphone", notificationText, 2300L, null, "notification-1");
+        LedgerEntry nextEvent = TransactionParser.parse("com.eg.android.alipaygphone", notificationText, 2400L, null, "notification-2");
+        assertTrue(eventLedger.add(firstEvent), "first notification event should be stored");
+        assertFalse(eventLedger.add(retriedEvent), "same stable event ID should be idempotent");
+        assertTrue(eventLedger.add(nextEvent), "a distinct event with identical text should be stored");
 
         // 用户报告的场景：两笔相同金额、相同商户的支付，时间间隔较长时
         // 属于两笔真实交易，不能因为「指纹相同」就永久丢掉后一笔。
@@ -76,6 +82,17 @@ public final class LocalLedgerTest {
         assertFalse(crossChannel.hasSimilar(
                 800L, "expense", "蜜雪冰城", 10_060_000L, 2 * 60 * 1000L, "accessibility"
         ), "同金额但隔了 1 分钟，不能判成重复");
+        LedgerEntry uncertain = TransactionParser.parse(
+                "com.tencent.mm", "微信支付 支付成功 ¥8.00", 10_090_000L
+        );
+        assertTrue(crossChannel.findPossibleSimilar(uncertain) == null,
+                "同一采集来源的不同事件不该被判成疑似重复而阻止入账");
+        LedgerEntry crossChannelUncertain = TransactionParser.fromPage(
+                "com.tencent.mm", "支付成功 ¥8.00", 800L, "未知商户", "expense",
+                10_060_000L, java.util.Collections.emptyList()
+        );
+        assertEquals(notified.id, crossChannel.findPossibleSimilar(crossChannelUncertain).id,
+                "跨来源且证据不足的组合保留复核候选");
 
         // 同一次支付：通知和页面几乎同时看到，时间差几秒，应判重。
         assertTrue(crossChannel.hasSimilar(
@@ -90,28 +107,35 @@ public final class LocalLedgerTest {
         assertFalse(namedLedger.hasSimilar(
                 800L, "expense", "瑞幸咖啡", 20_001_000L, 2 * 60 * 1000L, "accessibility"
         ), "商户不同就不该判重");
+        LedgerEntry differentMerchant = TransactionParser.parse(
+                "com.tencent.mm", "微信支付 支付成功 ¥8.00 商家：星巴克", 20_001_000L
+        );
+        assertTrue(namedLedger.findPossibleSimilar(differentMerchant) == null, "明确不同商户不进入疑似重复");
 
-        // 同一通道内的重复交给指纹，不能走这条判重逻辑。
+        // 同一通道内、前后差 1 秒、金额相同：不自动合并，真实连续支付必须保留。
         assertFalse(crossChannel.hasSimilar(
                 800L, "expense", "蜜雪冰城", 10_001_000L, 2 * 60 * 1000L, "notification"
-        ), "商户不明的同通道记录不算重复");
+        ), "同通道的独立通知事件不因金额和时间相近而自动合并");
 
-        // 用户实测：支付结果页停留期间反复触发内容变化事件，同一笔 ¥14 在
-        // 17:46/17:47/17:48 被记了 3 笔。同通道 + 同商户 + 同金额 + 几分钟内，
-        // 必须判重（旧逻辑「同通道直接跳过」正是这次三连账的根源）。
+        // 但同通道、隔一分钟就不再判重：那可能是真实的第二笔。
+        assertFalse(crossChannel.hasSimilar(
+                800L, "expense", "蜜雪冰城", 10_060_000L, 2 * 60 * 1000L, "notification"
+        ), "同通道隔一分钟的同金额记录不算重复");
+
+        // 页面重复由本地签名冷却覆盖；超过短窗口的同店同额交易要留给真实复购。
         LocalLedger pageLedger = new LocalLedger(50);
         assertTrue(pageLedger.add(TransactionParser.parse(
                 "com.tencent.mm", "微信支付 支付成功 ¥14.00 商家：红妞包子", 40_000_000L
         )), "第一笔应入账");
-        assertTrue(pageLedger.hasSimilar(
+        assertFalse(pageLedger.hasSimilar(
                 1400L, "expense", "红妞包子", 40_060_000L, 2 * 60 * 1000L, "accessibility", "com.tencent.mm"
-        ), "同通道同商户同金额 1 分钟后重复触发应判重");
-        assertTrue(pageLedger.hasSimilar(
+        ), "同通道间隔 1 分钟的同店消费可能是复购");
+        assertFalse(pageLedger.hasSimilar(
                 1400L, "expense", "红妞包子", 40_120_000L, 2 * 60 * 1000L, "accessibility", "com.tencent.mm"
-        ), "同通道同商户同金额 2 分钟后重复触发应判重");
+        ), "超过短冷却的同店同额交易可能是复购");
         assertFalse(pageLedger.hasSimilar(
                 1400L, "expense", "红妞包子", 40_700_000L, 2 * 60 * 1000L, "accessibility", "com.tencent.mm"
-        ), "超过 10 分钟的同商户同金额可能是真实第二笔，不判重");
+        ), "超过短冷却的同商户同金额可能是真实第二笔，不判重");
 
         System.out.println("local ledger tests passed: " + checks);
     }

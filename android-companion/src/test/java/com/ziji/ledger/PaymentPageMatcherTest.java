@@ -81,6 +81,14 @@ public final class PaymentPageMatcherTest {
                 Arrays.asList("张三", "¥32.00", "对方已收款", "按住说话"), "chat_window");
 
         // --- 应当拒绝：订单列表/详情页（历史订单的「交易成功」不是新支付） ---
+        // Some Android builds report the changed widget class instead of the Activity class,
+        // and the chat input row may be outside the first accessible nodes collected.
+        rejects("group chat with widget event class", "com.tencent.mm", "android.widget.LinearLayout",
+                Arrays.asList("星标", "退出星标", "癫疯Six", "昨天", "葛佳磊", "转账成功", "¥2.00", "对方已收款"),
+                "chat_window");
+        rejects("group chat with frame event class", "com.tencent.mm", "android.widget.FrameLayout",
+                Arrays.asList("星标", "退出星标", "癫疯Six", "昨天", "转账成功", "¥2.00"),
+                "chat_window");
         rejects("mini program order list", "com.tencent.mm", "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
                 Arrays.asList("交易成功", "¥32.00", "美团外卖", "待收货", "查看物流"), "order_list");
         rejects("alipay order detail", "com.eg.android.alipaygphone", "支付宝",
@@ -190,20 +198,19 @@ public final class PaymentPageMatcherTest {
 
         assertTrue(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_030_000L, 120_000L, "accessibility"),
                 "same payment seen by the other channel should be detected within window");
-        // 行为变更（用户实测）：同一笔支付的结果页停留期间反复触发，2~7 分钟后
-        // 又被记一笔。同商户同金额 10 分钟内一律判重，不再依赖通道/时间窗。
-        assertTrue(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_400_000L, 120_000L, "accessibility"),
-                "same merchant + same amount within 10 minutes is the same payment re-captured");
+        // 短时间的重复触发可拦截；几分钟后的同店同额也可能是复购，必须保留。
+        assertTrue(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_020_000L, 120_000L, "accessibility"),
+                "same merchant + same amount within short cooldown is a repeat");
+        assertFalse(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_400_000L, 120_000L, "accessibility"),
+                "same store several minutes later may be a real second purchase");
         assertFalse(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_700_000L, 120_000L, "accessibility"),
                 "same merchant beyond 10 minutes can be a real second purchase");
         assertFalse(ledger.hasSimilar(5000L, "expense", "美团外卖", 1_030_000L, 120_000L, "accessibility"),
                 "different amount is not a duplicate");
         assertFalse(ledger.hasSimilar(4680L, "income", "美团外卖", 1_030_000L, 120_000L, "accessibility"),
                 "different direction is not a duplicate");
-        // 同通道同商户同金额 10 分钟内同样判重：无障碍通道的支付页反复触发
-        // 正是用户实测 17:46/47/48 三笔 ¥14 的来源，不能因为「同通道」就放行。
-        assertTrue(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_060_000L, 120_000L, "notification"),
-                "same-channel same-merchant re-capture must be deduped too");
+        assertFalse(ledger.hasSimilar(4680L, "expense", "美团外卖", 1_020_000L, 120_000L, "notification"),
+                "an unspecified source package is not proof of a separate capture channel");
 
         LocalLedger unknownMerchant = new LocalLedger(20);
         LedgerEntry vague = TransactionParser.parse(

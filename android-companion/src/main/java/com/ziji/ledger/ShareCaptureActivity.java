@@ -55,11 +55,9 @@ public final class ShareCaptureActivity extends Activity {
 
         // 0 表示让解析器从分享文本里找交易时间，找不到才用当前时间。
         LedgerEntry localEntry = TransactionParser.parse("", text, 0L, LedgerRuleStore.load(this));
-        boolean recordedLocally = LocalLedgerStore.add(this, localEntry);
-
-        if (recordedLocally) {
-            LedgerAppStorage.repository(this).addPendingCapture(text);
-        }
+        LedgerRepository.AddResult localResult = LocalLedgerStore.addExplicitWithPending(this, localEntry, text);
+        boolean recordedLocally = localResult == LedgerRepository.AddResult.ADDED
+                || localResult == LedgerRepository.AddResult.MERGED;
 
         String endpoint = prefs.getString(BridgeSettings.KEY_ENDPOINT, "");
         String token = prefs.getString(BridgeSettings.KEY_TOKEN, "");
@@ -116,9 +114,9 @@ public final class ShareCaptureActivity extends Activity {
         BridgeClient client = new BridgeClient(endpoint, token, "android-share");
         // 逐条发送、逐条原子删除，避免整份覆盖与并发采集互相踩丢条目。
         int sent = 0;
-        for (String pending : queue.items()) {
-            client.postCapture(pending);
-            LedgerAppStorage.repository(this).removePendingCapture(pending);
+        for (PendingCaptureQueue.Item pending : queue.records()) {
+            client.postCapture(pending.id, pending.text);
+            LedgerAppStorage.repository(this).removePendingCaptureById(pending.id);
             sent += 1;
         }
         return sent;

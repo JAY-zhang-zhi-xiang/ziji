@@ -13,7 +13,12 @@ public final class NotificationDeduperTest {
         assertTrue("trimmed entry can post again", deduper.shouldPost("支付宝 付款 32.00元", 125_000L));
         assertFalse("blank notification", deduper.shouldPost("   ", 126_000L));
 
-        System.out.println("notification deduper tests passed: 7");
+        NotificationDeduper eventDeduper = new NotificationDeduper(120_000L, 20);
+        assertTrue("first stable event", eventDeduper.shouldPost("event-1", "same payment text", 1_000L));
+        assertFalse("same event retry", eventDeduper.shouldPost("event-1", "same payment text", 2_000L));
+        assertTrue("different event with identical text", eventDeduper.shouldPost("event-2", "same payment text", 3_000L));
+
+        System.out.println("notification deduper tests passed: 10");
     }
 
     private static void assertTrue(String name, boolean value) {

@@ -31,13 +31,8 @@ public final class ZijiAccessibilityService extends AccessibilityService {
     private static final long COOLDOWN_MILLIS = 1500L;
     /** 主线程提交节流：高频内容变化事件不必每次都进后台线程。 */
     private static final long SUBMIT_THROTTLE_MILLIS = 300L;
-    /**
-     * 相同特征页面的去重时间窗：只压同一张页面的重复事件，不阻挡后续真实支付。
-     * 支付结果页会在屏幕上停留 1~2 分钟并持续触发内容变化事件，10 秒远远不够
-     * （用户实测同一笔 ¥14 在 17:46/47/48 被记了 3 笔）；90 秒内同签名直接跳过，
-     * 更长周期的重复由 LocalLedger 的「同商户同金额 10 分钟」判重兜底。
-     */
-    private static final long PAGE_DEDUPE_WINDOW_MILLIS = 90 * 1000L;
+    /** 同一成功页的重复事件持续抑制，离开成功页后短暂确认再允许下一笔。 */
+    private static final long PAGE_EXIT_GRACE_MILLIS = 3 * 1000L;
     /** 跨通道去重的时间窗：通知与页面几乎同时到达。 */
     private static final long CROSS_CHANNEL_WINDOW_MILLIS = 2 * 60 * 1000L;
     /** 单次遍历最多看多少个节点，防止超长列表页把 CPU 吃满。 */
@@ -46,8 +41,7 @@ public final class ZijiAccessibilityService extends AccessibilityService {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private volatile long lastSubmitAt = 0L;
     private volatile long lastHandledAt = 0L;
-    private volatile String lastPageSignature = "";
-    private volatile long lastPageSignatureAt = 0L;
+    private final PaymentPageCaptureGate pageCaptureGate = new PaymentPageCaptureGate(PAGE_EXIT_GRACE_MILLIS);
     /** 付款前确认页暂存的对方/商户名，等结果页出现时补上（结果页通常只有金额没有商户）。 */
     private volatile String pendingMerchant = "";
     private volatile long pendingMerchantAt = 0L;
@@ -57,6 +51,7 @@ public final class ZijiAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         NotificationListenerStatusStore.recordAccessibility(this, "accessibility_connected", "accessibility bound");
         Log.i(TAG, "Accessibility capture channel connected");
+        BridgeSync.flushIfDue(this, executor, "android-accessibility-recovery");
     }
 
     @Override
@@ -138,6 +133,9 @@ public final class ZijiAccessibilityService extends AccessibilityService {
         PaymentPageMatcher.Result match = PaymentPageMatcher.inspect(packageName, title, nodes, pendingMerchant);
         if (!match.shouldCapture) {
             // 非成功页不占用冷却，避免聊天消息刷新把真正的支付页挤掉。
+            if (PaymentPageCaptureGate.isConfirmedExitReason(match.reason)) {
+                pageCaptureGate.observeNonPaymentPage(System.currentTimeMillis());
+            }
             logRejection(packageName, match);
             return;
         }
@@ -145,6 +143,9 @@ public final class ZijiAccessibilityService extends AccessibilityService {
         long now = System.currentTimeMillis();
         if (now - lastHandledAt < COOLDOWN_MILLIS) return;
         lastHandledAt = now;
+
+        String signature = packageName + "|" + match.amountCents + "|" + match.direction;
+        if (!pageCaptureGate.shouldCapture(signature, now)) return;
 
         processMatch(packageName, match);
     }
@@ -163,39 +164,7 @@ public final class ZijiAccessibilityService extends AccessibilityService {
     }
 
     private void processMatch(String packageName, PaymentPageMatcher.Result match) {
-        // 同一张成功页会连续触发多次事件，用「签名 + 时间窗」压掉重复；
-        // 必须带时间窗，否则同金额同商户的第二笔支付会被永久跳过。
-        long now = System.currentTimeMillis();
-        String signature = packageName + "|" + match.amountCents + "|" + match.direction + "|" + match.merchant;
-        if (signature.equals(lastPageSignature) && now - lastPageSignatureAt < PAGE_DEDUPE_WINDOW_MILLIS) {
-            return;
-        }
-        lastPageSignature = signature;
-        lastPageSignatureAt = now;
-
         LocalLedger ledger = LocalLedgerStore.load(this);
-        // 跨通道去重：如果通知监听已经记过同一笔，这里不再重复写入。
-        // 传入本通道类型，确保同一通道内连续两笔相同金额仍能各自入账。
-        if (ledger.hasSimilar(
-                match.amountCents,
-                match.direction,
-                match.merchant,
-                System.currentTimeMillis(),
-                CROSS_CHANNEL_WINDOW_MILLIS,
-                "accessibility",
-                packageName
-        )) {
-            CaptureHistoryStore.add(this, new CaptureEvent(
-                    System.currentTimeMillis(),
-                    "duplicate",
-                    "cross_channel_duplicate",
-                    packageName,
-                    match.normalizedText
-            ));
-            NotificationListenerStatusStore.recordAccessibility(this, "accessibility_duplicate", packageName);
-            return;
-        }
-
         LedgerEntry entry = TransactionParser.fromPage(
                 packageName,
                 match.normalizedText,
@@ -214,8 +183,38 @@ public final class ZijiAccessibilityService extends AccessibilityService {
             return;
         }
 
+        // 使用解析出的交易发生时间，而不是当前系统时间：支付页可能在消费后停留数分钟。
+        if (ledger.hasSimilar(
+                entry.amountCents,
+                entry.direction,
+                entry.merchant,
+                entry.occurredAtMillis,
+                CROSS_CHANNEL_WINDOW_MILLIS,
+                entry.sourceType,
+                entry.sourcePackage
+        )) {
+            CaptureHistoryStore.add(this, new CaptureEvent(
+                    System.currentTimeMillis(), "duplicate", "cross_channel_duplicate", packageName, match.normalizedText
+            ));
+            NotificationListenerStatusStore.recordAccessibility(this, "accessibility_duplicate", packageName);
+            return;
+        }
+
+        LedgerEntry possibleDuplicate = ledger.findPossibleSimilar(entry);
+        if (possibleDuplicate != null) {
+            CaptureHistoryStore.add(this, new CaptureEvent(
+                    System.currentTimeMillis(),
+                    "possible_duplicate",
+                    CaptureHistory.possibleDuplicateReason(possibleDuplicate.id),
+                    packageName,
+                    match.normalizedText
+            ));
+            NotificationListenerStatusStore.recordAccessibility(this, "possible_duplicate", "review_required");
+            return;
+        }
+
         // 写盘失败不能再当成「重复」，否则磁盘写不进去时用户完全无感。
-        LedgerRepository.AddResult saved = LocalLedgerStore.addResult(this, entry);
+        LedgerRepository.AddResult saved = LocalLedgerStore.addResultWithPending(this, entry, match.normalizedText);
         if (saved == LedgerRepository.AddResult.FAILED) {
             Log.e(TAG, "Failed to persist payment page capture");
             CaptureHistoryStore.add(this, new CaptureEvent(
@@ -230,9 +229,6 @@ public final class ZijiAccessibilityService extends AccessibilityService {
             ));
             return;
         }
-
-        // 原子追加：不再 load 整份队列再 save 覆盖，避免与并发的 flush 互相踩丢条目。
-        LedgerAppStorage.repository(this).addPendingCapture(match.normalizedText);
 
         CaptureHistoryStore.add(this, new CaptureEvent(
                 System.currentTimeMillis(), "captured", "captured", packageName, match.normalizedText
@@ -322,6 +318,7 @@ public final class ZijiAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        BridgeSync.cancelRetries(executor);
         executor.shutdownNow();
         super.onDestroy();
     }

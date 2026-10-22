@@ -10,9 +10,11 @@ import java.io.OutputStreamWriter;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 public final class LedgerRepository {
     private static final String MAIN_FILE = "ledger-store-v2.db";
@@ -20,7 +22,7 @@ public final class LedgerRepository {
     private static final String CORRUPT_PREFIX = "ledger-store-v2.db.corrupt-";
     private static final String HEADER = "ZIJI_LEDGER_DB\t1";
     private static final Object FILE_LOCK = new Object();
-    /** 同指纹去重时间窗：只有短时间内完全相同的指纹才视为同一次通知的重复投递。 */
+    /** 无稳定事件 ID 的旧调用兼容窗口；新通知依靠事件 ID 幂等。 */
     private static final long FINGERPRINT_DEDUPE_WINDOW_MILLIS = 2 * 60 * 1000L;
     /** 学到的「商户 → 分类」规则上限，防止无限制增长拖慢每次解析。 */
     private static final int MAX_LEARNED_RULES = 600;
@@ -316,31 +318,99 @@ public final class LedgerRepository {
     public enum AddResult {
         /** 新增成功。 */
         ADDED,
-        /** 已存在（id 相同，或时间窗内的同指纹重复投递）。 */
+        /** 已存在（id 相同，或时间窗内的同指纹重复投递），没有带来任何新信息。 */
         DUPLICATE,
+        /**
+         * 判定为同一笔，但新记录比已有那条更完整（有商户名 / 有分类 / 有用途），
+         * 已把新信息合并进原记录，账本条数不变。
+         *
+         * 这是「重复记账」最常见的形态：无障碍先记下带商户名的支付页，
+         * 通知晚到一步、只解析出「未知商户」。以前两条都留下，账上就是两笔；
+         * 现在合成一条，并且把通知里补出来的用途也带进去。
+         */
+        MERGED,
         /** 落盘失败，数据没保存。 */
         FAILED
     }
 
     public boolean addTransaction(LedgerEntry entry) {
-        return addTransactionResult(entry) == AddResult.ADDED;
+        AddResult result = addTransactionResult(entry);
+        return result == AddResult.ADDED || result == AddResult.MERGED;
     }
 
+    /**
+     * 自动采集通道的入库。
+     *
+     * 会做「同笔判定」：同一次支付被两条通道各看到一遍时合并成一条。
+     * 人工录入不要走这里，见 {@link #addExplicitTransactionResult}。
+     */
     public AddResult addTransactionResult(LedgerEntry entry) {
+        return addTransactionResult(entry, true, "");
+    }
+
+    /** 自动采集入账并把原文一并写入 outbox，两个结果共享一次原子落盘。 */
+    public AddResult addTransactionAndQueue(LedgerEntry entry, String pendingText) {
+        return addTransactionResult(entry, true, pendingText);
+    }
+
+    /**
+     * 人工录入的入库（手动记账、CSV 导入）。
+     *
+     * 不做同笔判定，只按 id / 指纹挡重复提交。
+     *
+     * 理由：人工录入是「用户明确要记一笔」，不是「机器可能重复看见」。用户在
+     * 同一家店连着买两杯同样价钱的咖啡，手动记两次，语义就是两笔；手机端自动
+     * 采集误判成重复只会少一条流水，人工录入误判成重复则是把用户刚输入的钱吞掉，
+     * 还弹一句「保存失败」让他反复重试。这条边界必须分开。
+     */
+    public AddResult addExplicitTransactionResult(LedgerEntry entry) {
+        return addTransactionResult(entry, false, "");
+    }
+
+    public AddResult addExplicitTransactionAndQueue(LedgerEntry entry, String pendingText) {
+        return addTransactionResult(entry, false, pendingText);
+    }
+
+    private AddResult addTransactionResult(LedgerEntry entry, boolean mergeSamePayment, String pendingText) {
         synchronized (FILE_LOCK) {
             LedgerState state = readState();
             TransactionRecord record = TransactionRecord.from(entry);
-            // id 不同即视为不同交易（id 里含时间戳）。
-            // 指纹不含时间戳，必须加上时间窗，否则「相同金额+相同商户」的后一笔
-            // 支付会被当成重复永久丢弃——这是「后续支付记不上」的关键原因。
+            // 稳定事件 ID 优先幂等；只有旧调用没有事件 ID 时才用短指纹窗口兜底。
             if (state.hasTransactionId(record.id)
-                    || state.hasRecentlySameFingerprint(record.fingerprint, record.occurredAtMillis)) {
+                    || (mergeSamePayment
+                        && !record.id.startsWith(TransactionParser.STABLE_CAPTURE_ID_PREFIX)
+                        && state.hasRecentlySameFingerprint(record.fingerprint, record.occurredAtMillis))) {
                 return AddResult.DUPLICATE;
             }
+            // 指纹只认「同一条原文」，跨通道永远对不上。真正的地基是这里：
+            // 所有写入都经过 addTransactionResult，所以把同笔判定放在这一层，
+            // 任何通道、任何调用路径都绕不过去。
+            int samePaymentIndex = mergeSamePayment ? state.findSamePayment(record) : -1;
+            if (samePaymentIndex >= 0) {
+                TransactionRecord existing = state.transactions.get(samePaymentIndex);
+                TransactionRecord merged = existing.mergedWith(record);
+                if (merged == existing) return AddResult.DUPLICATE;
+                state.transactions.set(samePaymentIndex, merged);
+                appendPendingIfNeeded(state, pendingText, record.id, System.currentTimeMillis());
+                state.updatedAtMillis = System.currentTimeMillis();
+                return writeState(state) ? AddResult.MERGED : AddResult.FAILED;
+            }
             state.transactions.add(0, record);
+            appendPendingIfNeeded(state, pendingText, record.id, System.currentTimeMillis());
             state.updatedAtMillis = System.currentTimeMillis();
             return writeState(state) ? AddResult.ADDED : AddResult.FAILED;
         }
+    }
+
+    private static void appendPendingIfNeeded(LedgerState state, String text, String captureId, long now) {
+        String normalized = normalize(text);
+        if (normalized.isEmpty()) return;
+        PendingRecord record = PendingRecord.from(normalized, now, captureId);
+        for (PendingRecord existing : state.pendingCaptures) {
+            if (existing.id.equals(record.id)) return;
+        }
+        state.pendingCaptures.add(record);
+        state.pendingCaptures = dedupePending(state.pendingCaptures);
     }
 
     /**
@@ -350,7 +420,11 @@ public final class LedgerRepository {
      * 临时文件 → rename。一千条就是一千次 fsync，手机上要等十几秒。
      * 这里把 N 次写压成一次。
      *
-     * @return 实际新增的条数（已存在的会被跳过）
+     * 与 {@link #addExplicitTransactionResult} 同一口径：不做同笔合并。
+     * CSV 是用户自己的历史账本，同一家店两笔同额消费本来就该各占一行，
+     * 导入时按「同笔」合并等于替用户改账。
+     *
+     * @return 实际新增的条数（id 或指纹已存在的会被跳过）
      */
     public int addTransactions(List<LedgerEntry> batch) {
         if (batch == null || batch.isEmpty()) return 0;
@@ -373,6 +447,130 @@ public final class LedgerRepository {
         }
     }
 
+    /**
+     * 历史疑似重复只提供候选，由用户逐笔决定是否合并。
+     *
+     * 判重修好只能挡住「以后」的重复，用户账本里那几条已经躺着了——
+     * 用户可以通过“查找历史疑似重复”逐笔复核；未处理的账单不会被改写。
+     * 不会因为扫描而自动删除或合并任何历史记录。
+     *
+     * 依据金额、方向、时间与商户相似度找候选，不将候选当作“同一笔”的结论。
+     * 用户确认后才会合并，且保留一条原记录 id。
+     *
+     */
+    /**
+     * 找出历史账本里金额与时间接近、但需要用户逐笔确认的组合；本方法只读，不改账。
+     */
+    public List<DuplicatePair> findHistoricalDuplicateCandidates() {
+        return findHistoricalDuplicateCandidates(Collections.emptySet());
+    }
+
+    public List<DuplicatePair> findHistoricalDuplicateCandidates(Set<String> reviewedPairKeys) {
+        synchronized (FILE_LOCK) {
+            List<DuplicatePair> result = new ArrayList<>();
+            Set<String> reviewed = reviewedPairKeys == null ? Collections.emptySet() : reviewedPairKeys;
+            java.util.Map<String, List<TransactionRecord>> buckets = new java.util.HashMap<>();
+            for (TransactionRecord record : readState().transactions) {
+                if (record.deletedAtMillis > 0L || record.amountCents <= 0L) continue;
+                String key = record.amountCents + "|" + record.direction;
+                List<TransactionRecord> bucket = buckets.get(key);
+                if (bucket == null) {
+                    bucket = new ArrayList<>();
+                    buckets.put(key, bucket);
+                }
+                bucket.add(record);
+            }
+
+            scanBuckets: for (List<TransactionRecord> bucket : buckets.values()) {
+                Collections.sort(bucket, (left, right) -> Long.compare(left.occurredAtMillis, right.occurredAtMillis));
+                Set<String> paired = new java.util.HashSet<>();
+                for (int leftIndex = 0; leftIndex < bucket.size(); leftIndex += 1) {
+                    TransactionRecord left = bucket.get(leftIndex);
+                    if (paired.contains(left.id)) continue;
+                    for (int rightIndex = leftIndex + 1; rightIndex < bucket.size(); rightIndex += 1) {
+                        TransactionRecord right = bucket.get(rightIndex);
+                        if (right.occurredAtMillis - left.occurredAtMillis > 10 * 60 * 1000L) break;
+                        if (paired.contains(right.id)) continue;
+                        if (PaymentIdentity.isReliableMerchant(left.merchant)
+                                && PaymentIdentity.isReliableMerchant(right.merchant)
+                                && !PaymentIdentity.sameMerchant(left.merchant, right.merchant)) continue;
+                        DuplicatePair pair = new DuplicatePair(left.toLedgerEntry(), right.toLedgerEntry());
+                        if (reviewed.contains(pair.reviewKey())) continue;
+                        result.add(pair);
+                        paired.add(left.id);
+                        paired.add(right.id);
+                        if (result.size() >= 100) break scanBuckets;
+                        break;
+                    }
+                }
+            }
+            Collections.sort(result, (left, right) -> Long.compare(
+                    left.existing.occurredAtMillis, right.existing.occurredAtMillis));
+            return Collections.unmodifiableList(result);
+        }
+    }
+
+    /** 用户明确确认一对重复后，合并信息并移除其中一条。 */
+    public boolean mergeConfirmedDuplicate(String existingId, String duplicateId) {
+        if (existingId == null || duplicateId == null || existingId.equals(duplicateId)) return false;
+        synchronized (FILE_LOCK) {
+            LedgerState state = readState();
+            int existingIndex = -1;
+            int duplicateIndex = -1;
+            for (int index = 0; index < state.transactions.size(); index += 1) {
+                TransactionRecord record = state.transactions.get(index);
+                if (record.deletedAtMillis > 0L) continue;
+                if (existingId.equals(record.id)) existingIndex = index;
+                if (duplicateId.equals(record.id)) duplicateIndex = index;
+            }
+            if (existingIndex < 0 || duplicateIndex < 0) return false;
+            TransactionRecord existing = state.transactions.get(existingIndex);
+            TransactionRecord duplicate = state.transactions.get(duplicateIndex);
+            if (existing.amountCents != duplicate.amountCents
+                    || !existing.direction.equals(duplicate.direction)
+                    || Math.abs(existing.occurredAtMillis - duplicate.occurredAtMillis) > 10 * 60 * 1000L
+                    || (PaymentIdentity.isReliableMerchant(existing.merchant)
+                        && PaymentIdentity.isReliableMerchant(duplicate.merchant)
+                        && !PaymentIdentity.sameMerchant(existing.merchant, duplicate.merchant))) return false;
+            TransactionRecord merged = existing.mergedWith(duplicate);
+            // 两条记录都先移除，再把合并结果插回「主记录」原来更靠前的位置。
+            // 不能直接 set(existingIndex) + remove(duplicateIndex)：当 existing 排在
+            // duplicate 之后（existingIndex > duplicateIndex）时，remove 会让列表整体前移，
+            // 合并结果就落在了错误的下标上，把另一条真实记录覆盖掉。
+            state.transactions.remove(existing);
+            state.transactions.remove(duplicate);
+            state.transactions.add(Math.min(existingIndex, duplicateIndex), merged);
+            state.updatedAtMillis = System.currentTimeMillis();
+            return writeState(state);
+        }
+    }
+
+    public static final class DuplicatePair {
+        public final LedgerEntry existing;
+        public final LedgerEntry candidate;
+
+        private DuplicatePair(LedgerEntry existing, LedgerEntry candidate) {
+            this.existing = existing;
+            this.candidate = candidate;
+        }
+
+        public String reviewKey() {
+            String first = duplicateEntryKey(existing);
+            String second = duplicateEntryKey(candidate);
+            if (first.compareTo(second) > 0) {
+                String swap = first;
+                first = second;
+                second = swap;
+            }
+            return LedgerCodec.fingerprint(first + "|" + second);
+        }
+
+        private static String duplicateEntryKey(LedgerEntry entry) {
+            return entry.id + "|" + entry.amountCents + "|" + entry.direction + "|"
+                    + entry.merchant + "|" + entry.occurredAtMillis;
+        }
+    }
+
     public boolean updateTransaction(LedgerEntry entry) {
         synchronized (FILE_LOCK) {
             LedgerState state = readState();
@@ -385,6 +583,25 @@ public final class LedgerRepository {
                 }
             }
             return false;
+        }
+    }
+
+    /** 用户确认候选与已有交易相同后，只把候选中的更完整字段合并进原记录。 */
+    public AddResult mergeCaptureIntoExisting(String existingId, LedgerEntry candidate) {
+        if (existingId == null || existingId.trim().isEmpty() || candidate == null) return AddResult.FAILED;
+        synchronized (FILE_LOCK) {
+            LedgerState state = readState();
+            TransactionRecord incoming = TransactionRecord.from(candidate);
+            for (int index = 0; index < state.transactions.size(); index += 1) {
+                TransactionRecord existing = state.transactions.get(index);
+                if (!existing.id.equals(existingId)) continue;
+                TransactionRecord merged = existing.mergedWith(incoming);
+                if (merged == existing) return AddResult.DUPLICATE;
+                state.transactions.set(index, merged);
+                state.updatedAtMillis = System.currentTimeMillis();
+                return writeState(state) ? AddResult.MERGED : AddResult.FAILED;
+            }
+            return AddResult.FAILED;
         }
     }
 
@@ -441,16 +658,38 @@ public final class LedgerRepository {
         synchronized (FILE_LOCK) {
             LedgerState state = readState();
             state.captureHistory.add(0, CaptureRecord.from(event));
+            List<CaptureEvent> events = captureEvents(state.captureHistory);
             while (state.captureHistory.size() > 30) {
-                state.captureHistory.remove(state.captureHistory.size() - 1);
+                int removable = -1;
+                for (int index = state.captureHistory.size() - 1; index >= 0; index -= 1) {
+                    if (!CaptureHistory.isPendingDuplicate(events.get(index), events)) {
+                        removable = index;
+                        break;
+                    }
+                }
+                if (removable < 0) break;
+                state.captureHistory.remove(removable);
+                events.remove(removable);
             }
             state.updatedAtMillis = System.currentTimeMillis();
             writeState(state);
         }
     }
 
+    private static List<CaptureEvent> captureEvents(List<CaptureRecord> records) {
+        List<CaptureEvent> events = new ArrayList<>();
+        for (CaptureRecord record : records) events.add(record.toCaptureEvent());
+        return events;
+    }
+
     public PendingCaptureQueue loadPendingQueue(int maxEntries) {
-        return PendingCaptureQueue.fromItems(snapshot().pendingCaptures, maxEntries);
+        synchronized (FILE_LOCK) {
+            List<PendingCaptureQueue.Item> items = new ArrayList<>();
+            for (PendingRecord record : readState().pendingCaptures) {
+                items.add(new PendingCaptureQueue.Item(record.id, record.text));
+            }
+            return PendingCaptureQueue.fromItemsWithIds(items, maxEntries);
+        }
     }
 
     public void savePendingQueue(PendingCaptureQueue queue) {
@@ -479,15 +718,49 @@ public final class LedgerRepository {
      * 这里在 FILE_LOCK 内「读最新状态 → 追加 → 写回」，一步到位，杜绝读旧写回。
      */
     public boolean addPendingCapture(String text) {
+        return addPendingCapture(text, UUID.randomUUID().toString(), System.currentTimeMillis());
+    }
+
+    public boolean addPendingCapture(String text, long createdAtMillis) {
+        return addPendingCapture(text, UUID.randomUUID().toString(), createdAtMillis);
+    }
+
+    public boolean addPendingCapture(String text, String captureId) {
+        return addPendingCapture(text, captureId, System.currentTimeMillis());
+    }
+
+    private boolean addPendingCapture(String text, String captureId, long createdAtMillis) {
         String normalized = normalize(text);
-        if (normalized.isEmpty()) return false;
+        if (normalized.isEmpty() || captureId == null || captureId.trim().isEmpty()) return false;
         synchronized (FILE_LOCK) {
             LedgerState state = readState();
-            PendingRecord record = PendingRecord.from(normalized, System.currentTimeMillis());
-            if (state.findPendingByFingerprint(record.fingerprint) != null) return false;
+            PendingRecord record = PendingRecord.from(normalized, createdAtMillis, captureId);
+            for (PendingRecord existing : state.pendingCaptures) {
+                if (existing.id.equals(captureId)) return false;
+            }
             List<PendingRecord> next = new ArrayList<>(state.pendingCaptures);
             next.add(record);
             state.pendingCaptures = dedupePending(next);
+            state.updatedAtMillis = System.currentTimeMillis();
+            return writeState(state);
+        }
+    }
+
+    public boolean removePendingCaptureById(String id) {
+        if (id == null || id.trim().isEmpty()) return false;
+        synchronized (FILE_LOCK) {
+            LedgerState state = readState();
+            List<PendingRecord> next = new ArrayList<>();
+            boolean removed = false;
+            for (PendingRecord record : state.pendingCaptures) {
+                if (!removed && id.equals(record.id)) {
+                    removed = true;
+                    continue;
+                }
+                next.add(record);
+            }
+            if (!removed) return false;
+            state.pendingCaptures = next;
             state.updatedAtMillis = System.currentTimeMillis();
             return writeState(state);
         }
@@ -863,13 +1136,13 @@ public final class LedgerRepository {
     }
 
     private static List<PendingRecord> dedupePending(List<PendingRecord> records) {
-        LinkedHashMap<String, PendingRecord> byFingerprint = new LinkedHashMap<>();
+        List<PendingRecord> retained = new ArrayList<>();
+        Set<String> seenIds = new java.util.HashSet<>();
         for (PendingRecord record : records) {
-            if (record != null && !byFingerprint.containsKey(record.fingerprint)) {
-                byFingerprint.put(record.fingerprint, record);
-            }
+            if (record == null) continue;
+            if (seenIds.add(record.id)) retained.add(record);
         }
-        return new ArrayList<>(byFingerprint.values());
+        return retained;
     }
 
     private static String normalize(String text) {
@@ -894,15 +1167,30 @@ public final class LedgerRepository {
             List<CaptureEvent> events = new ArrayList<>();
             for (CaptureRecord record : captureHistory) events.add(record.toCaptureEvent());
             List<String> pending = new ArrayList<>();
-            for (PendingRecord record : pendingCaptures) pending.add(record.text);
-            return new LedgerRepositorySnapshot(ledgerEntries, events, pending, rules, accounts, categories, legacyChecksum, migrationComplete, migratedAtMillis);
+            List<PendingCaptureQueue.Item> pendingItems = new ArrayList<>();
+            for (PendingRecord record : pendingCaptures) {
+                pending.add(record.text);
+                pendingItems.add(new PendingCaptureQueue.Item(record.id, record.text));
+            }
+            return new LedgerRepositorySnapshot(ledgerEntries, events, pending, pendingItems,
+                    rules, accounts, categories, legacyChecksum, migrationComplete, migratedAtMillis);
         }
 
         private static LedgerState fromSnapshot(LedgerRepositorySnapshot snapshot) {
             LedgerState state = new LedgerState();
             for (LedgerEntry entry : snapshot.transactions) state.transactions.add(TransactionRecord.from(entry));
             for (CaptureEvent event : snapshot.captureHistory) state.captureHistory.add(CaptureRecord.from(event));
-            for (String item : snapshot.pendingCaptures) state.pendingCaptures.add(PendingRecord.from(item, System.currentTimeMillis()));
+            if (!snapshot.pendingCaptureItems.isEmpty()) {
+                for (PendingCaptureQueue.Item item : snapshot.pendingCaptureItems) {
+                    PendingRecord generated = PendingRecord.from(item.text, System.currentTimeMillis());
+                    state.pendingCaptures.add(new PendingRecord(item.id, generated.text, generated.source,
+                            generated.fingerprint, generated.createdAtMillis, 0L));
+                }
+            } else {
+                for (String item : snapshot.pendingCaptures) {
+                    state.pendingCaptures.add(PendingRecord.from(item, System.currentTimeMillis()));
+                }
+            }
             state.rules = new ArrayList<>(snapshot.rules);
             state.accounts = new ArrayList<>(snapshot.accounts);
             state.categories = new ArrayList<>(snapshot.categories);
@@ -965,6 +1253,30 @@ public final class LedgerRepository {
                 }
             }
             return false;
+        }
+
+        /**
+         * 在已有记录里找「同一笔支付」，返回下标；没有则 -1。
+         *
+         * 规则全部交给 {@link PaymentIdentity}，和两条采集通道用的是同一份判定，
+         * 避免「通道说重复、写入口说新增」这种自相矛盾。
+         */
+        private int findSamePayment(TransactionRecord incoming) {
+            if (incoming == null || incoming.amountCents <= 0L) return -1;
+            for (int index = 0; index < transactions.size(); index += 1) {
+                TransactionRecord existing = transactions.get(index);
+                // 金额不同连判断都不用做，先挡掉绝大多数记录。
+                if (existing.amountCents != incoming.amountCents) continue;
+                if (PaymentIdentity.isSamePayment(
+                        existing.amountCents, existing.direction, existing.merchant, existing.occurredAtMillis,
+                        existing.sourceType, existing.sourcePackage,
+                        incoming.amountCents, incoming.direction, incoming.merchant, incoming.occurredAtMillis,
+                        incoming.sourceType, incoming.sourcePackage
+                )) {
+                    return index;
+                }
+            }
+            return -1;
         }
 
         private PendingRecord findPendingByFingerprint(String fingerprint) {
@@ -1115,6 +1427,96 @@ public final class LedgerRepository {
                     retainRawText,
                     note
             );
+        }
+
+        /**
+         * 把「同一笔的另一条记录」并进来。
+         *
+         * 两条通道各拿到一半信息是常态：页面有商户名但没有用途，通知有用途但认不出商户。
+         * 以前遇到这种情况是「后来的那条被当成重复丢掉」，用户看到的是
+         * 一条「未知商户 / 没认出用途」的账，另一条带着商户名的反倒被吞了。
+         *
+         * 合并策略是逐字段取更可信的那一版，而不是整体覆盖：
+         * 商户取「可信且更长」的，分类取「不是其他」的，用途取「非空」的。
+         * 返回 this 表示这条记录没有带来任何新信息。
+         *
+         * id / 指纹 / 创建时间保持原样：id 一变，同步端就会当成一条新账单再推一次。
+         */
+        private TransactionRecord mergedWith(TransactionRecord other) {
+            if (other == null) return this;
+            String nextMerchant = pickMerchant(merchant, other.merchant);
+            String nextCategory = pickCategory(category, other.category);
+            String nextNote = note.isEmpty() ? other.note : note;
+            String nextAccount = pickAccount(account, other.account);
+            // 原文取更长的那份：里面可能多出「商品说明」「转账备注」，用途补录还要用它。
+            String nextRaw = other.rawText.length() > rawText.length() ? other.rawText : rawText;
+            String nextPackage = sourcePackage.isEmpty() ? other.sourcePackage : sourcePackage;
+            String nextType = sourceType.isEmpty() ? other.sourceType : sourceType;
+            // 时间取更早的那个：交易一定发生在通知到达之前，
+            // 页面里解析出的交易时间通常比通知的到达时间更接近真相。
+            long nextOccurred = other.occurredAtMillis > 0L && occurredAtMillis > 0L
+                    ? Math.min(occurredAtMillis, other.occurredAtMillis)
+                    : Math.max(occurredAtMillis, other.occurredAtMillis);
+
+            boolean unchanged = nextMerchant.equals(merchant)
+                    && nextCategory.equals(category)
+                    && nextNote.equals(note)
+                    && nextAccount.equals(account)
+                    && nextRaw.equals(rawText)
+                    && nextPackage.equals(sourcePackage)
+                    && nextType.equals(sourceType)
+                    && nextOccurred == occurredAtMillis;
+            if (unchanged) return this;
+
+            return new TransactionRecord(
+                    id,
+                    amountCents,
+                    direction,
+                    nextMerchant,
+                    nextAccount,
+                    nextCategory,
+                    nextOccurred,
+                    nextRaw,
+                    nextPackage,
+                    nextType,
+                    fingerprint,
+                    createdAtMillis,
+                    System.currentTimeMillis(),
+                    deletedAtMillis,
+                    retainRawText || other.retainRawText,
+                    nextNote
+            );
+        }
+
+        /** 商户：可信优先，同样可信时取更长的那个（「红姐包子-软景店」比「红姐包子」信息多）。 */
+        private static String pickMerchant(String current, String incoming) {
+            String left = safe(current).trim();
+            String right = safe(incoming).trim();
+            boolean leftReliable = PaymentIdentity.isReliableMerchant(left);
+            boolean rightReliable = PaymentIdentity.isReliableMerchant(right);
+            if (leftReliable && rightReliable) return right.length() > left.length() ? right : left;
+            if (leftReliable) return left;
+            if (rightReliable) return right;
+            return left.isEmpty() ? right : left;
+        }
+
+        /** 分类：占位分类（其他 / 未分类 / 空）让位给真实分类，真实分类之间不互相覆盖。 */
+        private static String pickCategory(String current, String incoming) {
+            String left = safe(current).trim();
+            String right = safe(incoming).trim();
+            boolean leftPlaceholder = left.isEmpty() || "其他".equals(left) || "未分类".equals(left);
+            boolean rightPlaceholder = right.isEmpty() || "其他".equals(right) || "未分类".equals(right);
+            if (leftPlaceholder && !rightPlaceholder) return right;
+            return left.isEmpty() ? right : left;
+        }
+
+        private static String pickAccount(String current, String incoming) {
+            String left = safe(current).trim();
+            String right = safe(incoming).trim();
+            boolean leftUnknown = left.isEmpty() || "未识别账户".equals(left) || "现金".equals(left);
+            boolean rightUnknown = right.isEmpty() || "未识别账户".equals(right) || "现金".equals(right);
+            if (leftUnknown && !rightUnknown) return right;
+            return left.isEmpty() ? right : left;
         }
 
         private LedgerEntry toLedgerEntry() {
@@ -1309,9 +1711,13 @@ public final class LedgerRepository {
         }
 
         private static PendingRecord from(String text, long createdAtMillis) {
+            return from(text, createdAtMillis, UUID.randomUUID().toString());
+        }
+
+        private static PendingRecord from(String text, long createdAtMillis, String id) {
             String normalized = normalize(text);
             return new PendingRecord(
-                    fingerprintOf(normalized),
+                    id,
                     normalized,
                     "bridge",
                     fingerprintOf("pending|" + normalized),

@@ -23,6 +23,7 @@ public final class ZijiNotificationListenerService extends NotificationListenerS
     public void onListenerConnected() {
         NotificationListenerStatusStore.record(this, "connected", "listener bound");
         super.onListenerConnected();
+        BridgeSync.flushIfDue(this, executor, "android-notification-recovery");
     }
 
     @Override
@@ -58,8 +59,15 @@ public final class ZijiNotificationListenerService extends NotificationListenerS
         executor.execute(() -> {
           try {
           LocalLedger ledger = LocalLedgerStore.load(this);
+          // processor.process 会先把新捕获放进这份内存账本；跨通道比对必须用处理前快照，
+          // 否则新条目会和自己匹配，所有通知都被当成重复跳过。
+          LocalLedger previousLedger = LocalLedger.fromEntries(
+                  ledger.entries(), Math.max(ledger.size() + 1, 1));
           PendingCaptureQueue queue = loadPendingQueue();
           java.util.List<String> rules = LedgerRuleStore.load(this);
+          String stableEventId = LedgerCodec.checksum(
+                  "notification", sbn.getKey(), String.valueOf(sbn.getPostTime())
+          );
           NotificationCaptureProcessor.Result result = processor.process(
                 sbn.getPackageName(),
                 title,
@@ -69,7 +77,8 @@ public final class ZijiNotificationListenerService extends NotificationListenerS
                 deduper,
                 ledger,
                 queue,
-                rules
+                rules,
+                stableEventId
           );
 
         // 只存「支付相关」通知的样本：普通聊天既不是 matched 也不会命中 shouldLogRejection，
@@ -116,11 +125,24 @@ public final class ZijiNotificationListenerService extends NotificationListenerS
             return;
         }
 
+        LedgerEntry possibleDuplicate = previousLedger.findPossibleSimilar(result.entry);
+        if (possibleDuplicate != null) {
+            CaptureHistoryStore.add(this, new CaptureEvent(
+                    System.currentTimeMillis(),
+                    "possible_duplicate",
+                    CaptureHistory.possibleDuplicateReason(possibleDuplicate.id),
+                    sbn.getPackageName(),
+                    result.normalizedText
+            ));
+            NotificationListenerStatusStore.recordNotification(this, "possible_duplicate", "review_required");
+            return;
+        }
+
         // 跨通道去重：页面识别通道可能已经记过同一笔。
         // 这里复用上面已经加载好的 ledger 快照，不再重复读一次文件；
         // 刚加入的这笔 sourceType 是 notification，会被 hasSimilar 主动跳过，
         // 所以不会自己和自己撞车。
-        boolean alreadySeenByPage = ledger.hasSimilar(
+        boolean alreadySeenByPage = previousLedger.hasSimilar(
                 result.entry.amountCents,
                 result.entry.direction,
                 result.entry.merchant,
@@ -144,11 +166,9 @@ public final class ZijiNotificationListenerService extends NotificationListenerS
         // 只有真正落盘成功才推送到同步队列。
         // 以前 add 只返回 boolean，「重复」和「写盘失败」都是 false，
         // 磁盘写不进去时会被当成「已经记过了」，用户完全无感。
-        LedgerRepository.AddResult saved = LocalLedgerStore.addResult(this, result.entry);
-        if (saved == LedgerRepository.AddResult.ADDED) {
-            // 原子追加这一条，而不是把整个内存队列整份覆盖磁盘——
-            // 覆盖会跟并发的 flush/其它通道互相踩，把刚捕获的新条目抹掉。
-            LedgerAppStorage.repository(this).addPendingCapture(result.normalizedText);
+        LedgerRepository.AddResult saved = LocalLedgerStore.addResultWithPending(
+                this, result.entry, result.normalizedText);
+        if (saved == LedgerRepository.AddResult.ADDED || saved == LedgerRepository.AddResult.MERGED) {
             Log.i(TAG, "Saved payment notification to local ledger");
         } else if (saved == LedgerRepository.AddResult.FAILED) {
             Log.e(TAG, "Failed to persist payment notification: " + result.normalizedText);
@@ -184,13 +204,14 @@ public final class ZijiNotificationListenerService extends NotificationListenerS
     private static String captureStatus(NotificationCaptureProcessor.Result result) {
         if (!result.matched) return "rejected";
         if (!result.fresh) return "duplicate";
-        // matched + fresh 但没入库，说明本地账本按「指纹 + 时间窗」判定为重复。
+        // matched + fresh 但没入库，说明本地账本判定为相同流水或旧路径重复。
         // 以前这里返回 "ignored"，用户看到的是「忽略了」，会以为这条被丢掉了。
         return result.recorded ? "captured" : "duplicate";
     }
 
     @Override
     public void onDestroy() {
+        BridgeSync.cancelRetries(executor);
         executor.shutdownNow();
         super.onDestroy();
     }

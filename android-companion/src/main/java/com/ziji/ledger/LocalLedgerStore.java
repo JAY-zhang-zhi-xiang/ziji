@@ -21,6 +21,30 @@ public final class LocalLedgerStore {
         return LedgerAppStorage.repository(context).addTransactionResult(entry);
     }
 
+    public static synchronized LedgerRepository.AddResult addResultWithPending(
+            Context context, LedgerEntry entry, String pendingText) {
+        return LedgerAppStorage.repository(context).addTransactionAndQueue(entry, pendingText);
+    }
+
+    /**
+     * 人工录入（手动记账）入库：不做同笔合并。
+     *
+     * 用户手动记两笔同额同店的钱，是两笔真实流水，不能因为「看起来像重复」被吞掉。
+     */
+    public static synchronized LedgerRepository.AddResult addExplicit(Context context, LedgerEntry entry) {
+        return LedgerAppStorage.repository(context).addExplicitTransactionResult(entry);
+    }
+
+    public static synchronized LedgerRepository.AddResult addExplicitWithPending(
+            Context context, LedgerEntry entry, String pendingText) {
+        return LedgerAppStorage.repository(context).addExplicitTransactionAndQueue(entry, pendingText);
+    }
+
+    public static synchronized LedgerRepository.AddResult mergeCaptureIntoExisting(
+            Context context, String existingId, LedgerEntry candidate) {
+        return LedgerAppStorage.repository(context).mergeCaptureIntoExisting(existingId, candidate);
+    }
+
     /** 批量入库，只写一次盘。CSV 导入用。 */
     public static synchronized int addAll(Context context, List<LedgerEntry> entries) {
         return LedgerAppStorage.repository(context).addTransactions(entries);

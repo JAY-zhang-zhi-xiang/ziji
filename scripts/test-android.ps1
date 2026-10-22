@@ -42,6 +42,8 @@ try {
         "android-companion\src\main\java\com\ziji\ledger\MerchantDictionary.java",
         "android-companion\src\main\java\com\ziji\ledger\PurposeResolver.java",
         "android-companion\src\main\java\com\ziji\ledger\PaymentPageMatcher.java",
+        "android-companion\src\main\java\com\ziji\ledger\PaymentIdentity.java",
+        "android-companion\src\main\java\com\ziji\ledger\PaymentPageCaptureGate.java",
         "android-companion\src\main\java\com\ziji\ledger\LocalLedger.java",
         "android-companion\src\main\java\com\ziji\ledger\RefundOffset.java",
         "android-companion\src\main\java\com\ziji\ledger\LedgerCsvExporter.java",
@@ -59,6 +61,8 @@ try {
         "android-companion\src\test\java\com\ziji\ledger\PaymentPageMatcherTest.java",
         "android-companion\src\test\java\com\ziji\ledger\PurposeResolverTest.java",
         "android-companion\src\test\java\com\ziji\ledger\LocalLedgerTest.java",
+        "android-companion\src\test\java\com\ziji\ledger\PaymentIdentityTest.java",
+        "android-companion\src\test\java\com\ziji\ledger\PaymentPageCaptureGateTest.java",
         "android-companion\src\test\java\com\ziji\ledger\RefundOffsetTest.java",
         "android-companion\src\test\java\com\ziji\ledger\LedgerCategoriesTest.java",
         "android-companion\src\test\java\com\ziji\ledger\LedgerCsvExporterTest.java",
@@ -116,6 +120,12 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     & java -cp $outDir com.ziji.ledger.LocalLedgerTest
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    & java -cp $outDir com.ziji.ledger.PaymentIdentityTest
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    & java -cp $outDir com.ziji.ledger.PaymentPageCaptureGateTest
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     & java -cp $outDir com.ziji.ledger.RefundOffsetTest

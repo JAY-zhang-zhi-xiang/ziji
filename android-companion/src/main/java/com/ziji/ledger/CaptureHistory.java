@@ -6,6 +6,7 @@ import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 public final class CaptureHistory {
     private final int maxEntries;
@@ -16,30 +17,65 @@ public final class CaptureHistory {
     }
 
     public static CaptureHistory fromStoredString(String raw, int maxEntries) {
-        CaptureHistory history = new CaptureHistory(maxEntries);
-        if (raw == null || raw.trim().isEmpty()) return history;
+        List<CaptureEvent> events = new ArrayList<>();
+        if (raw == null || raw.trim().isEmpty()) return fromEntries(events, maxEntries);
         for (String line : raw.split("\\n")) {
             CaptureEvent event = decodeEvent(line);
-            if (event != null) history.entries.add(event);
-            if (history.entries.size() >= history.maxEntries) break;
+            if (event != null) events.add(event);
         }
-        return history;
+        return fromEntries(events, maxEntries);
     }
 
     public static CaptureHistory fromEntries(List<CaptureEvent> source, int maxEntries) {
         CaptureHistory history = new CaptureHistory(maxEntries);
         if (source == null) return history;
-        for (CaptureEvent event : source) {
-            if (event != null) history.entries.add(event);
-            if (history.entries.size() >= history.maxEntries) break;
-        }
+        history.entries.addAll(retainRecentAndPending(source, history.maxEntries));
         return history;
+    }
+
+    public static String possibleDuplicateReason(String existingId) {
+        return "possible_duplicate:" + (existingId == null ? "" : existingId) + ":" + UUID.randomUUID();
+    }
+
+    public static String resolutionReason(CaptureEvent candidate, String outcome) {
+        if (candidate == null) return "candidate_resolved::" + (outcome == null ? "" : outcome);
+        return "candidate_resolved:" + candidate.timestampMillis + ":" + candidate.reason
+                + ":" + (outcome == null ? "" : outcome);
+    }
+
+    public static boolean isResolved(CaptureEvent candidate, List<CaptureEvent> events) {
+        if (candidate == null || events == null || !"possible_duplicate".equals(candidate.status)) return false;
+        String prefix = "candidate_resolved:" + candidate.timestampMillis + ":" + candidate.reason + ":";
+        for (CaptureEvent event : events) {
+            if (event != null && "resolved".equals(event.status) && event.reason.startsWith(prefix)) return true;
+        }
+        return false;
+    }
+
+    public static boolean isPendingDuplicate(CaptureEvent candidate, List<CaptureEvent> events) {
+        return candidate != null && "possible_duplicate".equals(candidate.status) && !isResolved(candidate, events);
+    }
+
+    private static List<CaptureEvent> retainRecentAndPending(List<CaptureEvent> source, int maxEntries) {
+        List<CaptureEvent> retained = new ArrayList<>();
+        int recentNonPending = 0;
+        for (CaptureEvent event : source) {
+            if (event == null) continue;
+            boolean pending = isPendingDuplicate(event, source);
+            if (pending || recentNonPending < maxEntries) {
+                retained.add(event);
+                if (!pending) recentNonPending += 1;
+            }
+        }
+        return retained;
     }
 
     public void add(CaptureEvent event) {
         if (event == null || event.status.isEmpty()) return;
         entries.add(0, event);
-        while (entries.size() > maxEntries) entries.remove(entries.size() - 1);
+        List<CaptureEvent> retained = retainRecentAndPending(entries, maxEntries);
+        entries.clear();
+        entries.addAll(retained);
     }
 
     public List<CaptureEvent> entries() {

@@ -8,6 +8,7 @@ public final class LedgerRepositorySnapshot {
     public final List<LedgerEntry> transactions;
     public final List<CaptureEvent> captureHistory;
     public final List<String> pendingCaptures;
+    public final List<PendingCaptureQueue.Item> pendingCaptureItems;
     public final List<String> rules;
     public final List<String> accounts;
     public final List<String> categories;
@@ -26,9 +27,28 @@ public final class LedgerRepositorySnapshot {
             boolean migrationComplete,
             long migratedAtMillis
     ) {
+        this(transactions, captureHistory, pendingCaptures, null, rules, accounts, categories,
+                legacyChecksum, migrationComplete, migratedAtMillis);
+    }
+
+    public LedgerRepositorySnapshot(
+            List<LedgerEntry> transactions,
+            List<CaptureEvent> captureHistory,
+            List<String> pendingCaptures,
+            List<PendingCaptureQueue.Item> pendingCaptureItems,
+            List<String> rules,
+            List<String> accounts,
+            List<String> categories,
+            String legacyChecksum,
+            boolean migrationComplete,
+            long migratedAtMillis
+    ) {
         this.transactions = immutableCopy(transactions);
         this.captureHistory = immutableCopy(captureHistory);
         this.pendingCaptures = immutableCopyStrings(pendingCaptures);
+        this.pendingCaptureItems = Collections.unmodifiableList(new ArrayList<>(pendingCaptureItems == null
+                ? PendingCaptureQueue.fromItems(this.pendingCaptures, Math.max(this.pendingCaptures.size(), 1)).records()
+                : pendingCaptureItems));
         this.rules = immutableCopyStrings(rules);
         this.accounts = immutableCopyStrings(accounts);
         this.categories = immutableCopyStrings(categories);
@@ -46,6 +66,7 @@ public final class LedgerRepositorySnapshot {
                 transactions,
                 captureHistory,
                 pendingCaptures,
+                pendingCaptureItems,
                 rules,
                 accounts,
                 categories,

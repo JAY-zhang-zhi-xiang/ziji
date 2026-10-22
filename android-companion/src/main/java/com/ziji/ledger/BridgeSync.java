@@ -2,7 +2,12 @@ package com.ziji.ledger;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.RejectedExecutionException;
 
 import java.util.concurrent.Executor;
 
@@ -23,6 +28,10 @@ final class BridgeSync {
     private static final long FLUSH_THROTTLE_MILLIS = 10 * 1000L;
 
     private static volatile long lastFlushAt = 0L;
+    private static final Handler RETRY_HANDLER = new Handler(Looper.getMainLooper());
+    private static final AtomicBoolean RETRY_SCHEDULED = new AtomicBoolean(false);
+    private static volatile Executor retryExecutor;
+    private static volatile Runnable retryTask;
 
     private BridgeSync() {
     }
@@ -57,6 +66,7 @@ final class BridgeSync {
         if (now - lastFlushAt < FLUSH_THROTTLE_MILLIS) return;
         lastFlushAt = now;
         String token = token(context);
+        try {
         executor.execute(() -> {
             try {
                 BridgeClient client = new BridgeClient(endpoint, token, source);
@@ -64,15 +74,45 @@ final class BridgeSync {
                 // 那会跟并发的采集追加互相踩，把刚捕获的新条目一起抹掉。
                 PendingCaptureQueue queue = loadQueue(context);
                 int sent = 0;
-                for (String pending : queue.items()) {
-                    client.postCapture(pending);
-                    LedgerAppStorage.repository(context).removePendingCapture(pending);
+                for (PendingCaptureQueue.Item pending : queue.records()) {
+                    client.postCapture(pending.id, pending.text);
+                    LedgerAppStorage.repository(context).removePendingCaptureById(pending.id);
                     sent += 1;
                 }
                 if (sent > 0) Log.i(TAG, "Posted pending captures from " + source + ": " + sent);
             } catch (Exception error) {
+                // Allow the next capture to retry immediately; otherwise a
+                // transient failure can leave the outbox idle indefinitely.
+                lastFlushAt = 0L;
+                scheduleRetry(context.getApplicationContext(), executor, source);
                 Log.w(TAG, "Failed to post pending captures from " + source, error);
             }
         });
+        } catch (RejectedExecutionException error) {
+            lastFlushAt = 0L;
+            Log.i(TAG, "Skip bridge retry because capture service stopped");
+        }
+    }
+
+    private static void scheduleRetry(Context context, Executor executor, String source) {
+        if (!RETRY_SCHEDULED.compareAndSet(false, true)) return;
+        retryExecutor = executor;
+        Runnable task = () -> {
+            RETRY_SCHEDULED.set(false);
+            retryTask = null;
+            retryExecutor = null;
+            flushIfDue(context, executor, source);
+        };
+        retryTask = task;
+        RETRY_HANDLER.postDelayed(task, 15 * 1000L);
+    }
+
+    static void cancelRetries(Executor executor) {
+        if (retryExecutor != executor) return;
+        Runnable task = retryTask;
+        if (task != null) RETRY_HANDLER.removeCallbacks(task);
+        retryTask = null;
+        retryExecutor = null;
+        RETRY_SCHEDULED.set(false);
     }
 }

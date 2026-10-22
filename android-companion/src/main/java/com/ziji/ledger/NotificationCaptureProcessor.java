@@ -13,7 +13,7 @@ public final class NotificationCaptureProcessor {
             LocalLedger ledger,
             PendingCaptureQueue queue
     ) {
-        return process(packageName, title, text, occurredAtMillis, receivedAtMillis, deduper, ledger, queue, null);
+        return process(packageName, title, text, occurredAtMillis, receivedAtMillis, deduper, ledger, queue, null, "");
     }
 
     public Result process(
@@ -27,11 +27,26 @@ public final class NotificationCaptureProcessor {
             PendingCaptureQueue queue,
             List<String> rules
     ) {
+        return process(packageName, title, text, occurredAtMillis, receivedAtMillis, deduper, ledger, queue, rules, "");
+    }
+
+    public Result process(
+            String packageName,
+            String title,
+            String text,
+            long occurredAtMillis,
+            long receivedAtMillis,
+            NotificationDeduper deduper,
+            LocalLedger ledger,
+            PendingCaptureQueue queue,
+            List<String> rules,
+            String stableEventId
+    ) {
         NotificationMatcher.MatchResult match = NotificationMatcher.inspect(packageName, title, text);
         if (!match.shouldCapture()) {
             return Result.rejected(match.reason(), match.normalizedText());
         }
-        if (!deduper.shouldPost(match.normalizedText(), receivedAtMillis)) {
+        if (!deduper.shouldPost(stableEventId, match.normalizedText(), receivedAtMillis)) {
             return Result.duplicate(match.normalizedText());
         }
 
@@ -41,12 +56,12 @@ public final class NotificationCaptureProcessor {
                 match.normalizedText(),
                 occurredAtMillis > 0 ? occurredAtMillis : receivedAtMillis
         );
-        LedgerEntry entry = TransactionParser.parse(packageName, match.normalizedText(), occurredAt, rules);
+        LedgerEntry entry = TransactionParser.parse(packageName, match.normalizedText(), occurredAt, rules, stableEventId);
         if (entry.amountCents <= 0L) {
             return Result.rejected("missing_amount", match.normalizedText());
         }
         boolean recorded = ledger.add(entry);
-        boolean queued = recorded && queue.add(match.normalizedText());
+        boolean queued = recorded && queue.add(stableEventId, match.normalizedText());
         return Result.captured(match.normalizedText(), entry, recorded, queued);
     }
 

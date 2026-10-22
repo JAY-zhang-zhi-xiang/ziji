@@ -68,10 +68,16 @@ public final class BridgeClientTest {
                     "{\"source\":\"android-companion-test\",\"text\":\"tab\\there\\u0001ctrl\"}",
                     secondBody
             );
+            client.postCapture("event-42", "same text");
+            assertEquals(
+                    "capture id body",
+                    "{\"source\":\"android-companion-test\",\"captureId\":\"event-42\",\"text\":\"same text\"}",
+                    receivedBody.get()
+            );
         } finally {
             server.stop(0);
         }
-        System.out.println("bridge client tests passed: 3");
+        System.out.println("bridge client tests passed: 4");
     }
 
     private static void assertEquals(String name, String expected, String actual) {

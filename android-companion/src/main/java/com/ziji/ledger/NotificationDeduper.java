@@ -15,8 +15,14 @@ public final class NotificationDeduper {
     }
 
     public synchronized boolean shouldPost(String text, long nowMillis) {
-        String key = normalize(text);
-        if (key.isEmpty()) return false;
+        return shouldPost("", text, nowMillis);
+    }
+
+    public synchronized boolean shouldPost(String stableEventId, String text, long nowMillis) {
+        String eventId = normalize(stableEventId);
+        String normalizedText = normalize(text);
+        if (eventId.isEmpty() && normalizedText.isEmpty()) return false;
+        String key = eventId.isEmpty() ? "text:" + normalizedText : "event:" + eventId;
 
         pruneExpired(nowMillis);
         if (recent.containsKey(key)) return false;

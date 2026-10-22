@@ -9,6 +9,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class TransactionParser {
+    /** Prefix marking transaction IDs derived from a stable capture event. */
+    public static final String STABLE_CAPTURE_ID_PREFIX = "capture-";
     private static final Pattern MONEY_PATTERN = Pattern.compile(
             "(?:(?:人民币|RMB|CNY|¥|￥)\\s*)?((?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?)\\s*(?:元|块)?",
             Pattern.CASE_INSENSITIVE
@@ -68,6 +70,18 @@ public final class TransactionParser {
      */
     private static final Pattern MERCHANT_STATE_BLACKLIST = Pattern.compile(
             "确认收款|已收款|收款|等待对方|待对方|对方|已到账|到账|成功|完成|已支付|已付款|处理中|支付中"
+    );
+
+    /**
+     * 界面元素不是商户。
+     *
+     * 用户账本里出现过一家叫「搜索」的店——那是微信/支付宝页面顶部的搜索框节点。
+     * 危害不只是难看：同一笔支付的另一条记录带着真实商户名，
+     * 两条「商户名不同」，跨通道判重会直接认定为两笔不同消费，于是重复入账。
+     */
+    private static final Pattern MERCHANT_UI_NOISE = Pattern.compile(
+            "^(?:搜索|搜索结果|全部|全部账单|账单|账单详情|明细|详情|记录|交易记录|支付记录|首页|消息|我的|设置"
+                    + "|返回|关闭|更多|筛选|统计|复制|分享|保存|截图|取消|确定|完成)$"
     );
 
     private static final Pattern[] MERCHANT_PATTERNS = new Pattern[] {
@@ -163,6 +177,17 @@ public final class TransactionParser {
     }
 
     public static LedgerEntry parse(String packageName, String source, long occurredAtMillis, List<String> rules) {
+        return parse(packageName, source, occurredAtMillis, rules, "");
+    }
+
+    /** Parse a notification while preserving the source event's idempotency key in the ledger ID. */
+    public static LedgerEntry parse(
+            String packageName,
+            String source,
+            long occurredAtMillis,
+            List<String> rules,
+            String stableEventId
+    ) {
         String text = normalize(source);
         long amountCents = detectAmountCents(text);
         String direction = detectDirection(text);
@@ -174,7 +199,9 @@ public final class TransactionParser {
         long timestamp = occurredAtMillis > 0
                 ? occurredAtMillis
                 : resolveOccurredAt(text, System.currentTimeMillis());
-        String id = "txn-" + timestamp + "-" + Integer.toHexString(text.hashCode());
+        String id = stableEventId == null || stableEventId.trim().isEmpty()
+                ? "txn-" + timestamp + "-" + Integer.toHexString(text.hashCode())
+                : STABLE_CAPTURE_ID_PREFIX + LedgerCodec.checksum(stableEventId).replace("sha256:", "");
         String sourceType = packageName == null || packageName.trim().isEmpty() ? "share" : "notification";
         return new LedgerEntry(
                 id,
@@ -456,6 +483,10 @@ public final class TransactionParser {
         if (cleaned.isEmpty()) return "未知商户";
         // 清理后若只剩状态词（如「确认收款」「已收款」「等待对方」），不能当商户名。
         if (MERCHANT_STATE_BLACKLIST.matcher(cleaned).find()) return "未知商户";
+        // 界面元素（搜索框、账单页标题、底栏文案）也不是商户：
+        // 「搜索」被当成店名之后，同一笔支付的两条记录商户名对不上，
+        // 跨通道判重就会把它们当成两笔不同的消费放行。
+        if (MERCHANT_UI_NOISE.matcher(cleaned).find()) return "未知商户";
         return cleaned;
     }
 
